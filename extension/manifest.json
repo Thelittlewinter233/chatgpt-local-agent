@@ -7,8 +7,24 @@
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*", "https://chatglm.cn/*"],
-      "js": ["adapters/chatgpt.js", "adapters/chatglm.js", "adapters/registry.js", "content.js"],
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chatglm.cn/*",
+        "https://chat.deepseek.com/*",
+        "https://www.kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://www.doubao.com/*"
+      ],
+      "js": [
+        "adapters/heuristic.js",
+        "adapters/chatgpt.js",
+        "adapters/chatglm.js",
+        "adapters/deepseek.js",
+        "adapters/kimi.js",
+        "adapters/doubao.js",
+        "adapters/registry.js",
+        "content.js"
+      ],
       "run_at": "document_idle"
     }
   ],
