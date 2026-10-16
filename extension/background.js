@@ -144,15 +144,27 @@ async function handleFrame(m) {
   }
   if (m.type === 'confirm-required') {
     (async () => {
-      const ids = await broadcastTabs();
-      let delivered = false;
-      for (const id of ids) {
+      const preview = { type: 'confirm-request', confirmId: m.confirmId, preview: m.preview };
+      const preferred = [];
+      const active = await activeTabId();
+      if (active != null) preferred.push(active);
+      const leader = await targetTabId();
+      if (leader != null && !preferred.includes(leader)) preferred.push(leader);
+      for (const id of preferred) {
         try {
-          await chrome.tabs.sendMessage(id, { type: 'confirm-request', confirmId: m.confirmId, preview: m.preview });
-          delivered = true;
+          await chrome.tabs.sendMessage(id, preview);
+          return;
         } catch { }
       }
-      if (!delivered) console.log('[AgentBridge] confirm required but no content-script tab reachable');
+      const ids = await broadcastTabs();
+      for (const id of ids) {
+        if (preferred.includes(id)) continue;
+        try {
+          await chrome.tabs.sendMessage(id, preview);
+          return;
+        } catch { }
+      }
+      console.log('[AgentBridge] confirm required but no content-script tab reachable');
     })();
     return;
   }
