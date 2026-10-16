@@ -1,4 +1,4 @@
-(() => {
+var __abMakeHeuristicAdapter = (() => {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const norm = s => String(s || '').replace(/\s+/g, '');
   const inputHasPending = el => norm((el.textContent || '') + (el.value || '')).includes('agent-result');
@@ -8,7 +8,7 @@
     return !!(rect.width || rect.height) && getComputedStyle(el).visibility !== 'hidden';
   }
 
-  window.__abMakeHeuristicAdapter = function (opts) {
+  return function (opts) {
     function findInput() {
       for (const sel of opts.inputSelectors || []) {
         const list = [...document.querySelectorAll(sel)].filter(visible);

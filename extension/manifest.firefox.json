@@ -1,0 +1,36 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Local Agent Bridge",
+  "version": "0.1.0",
+  "description": "把网页 AI 对话（ChatGPT/智谱/DeepSeek/Kimi/豆包）中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
+  "permissions": ["storage"],
+  "background": { "scripts": ["background.js"] },
+  "browser_specific_overrides": {
+    "gecko": { "id": "agent-bridge@thelittlewinter233.dev", "strict_min_version": "109.0" }
+  },
+  "content_scripts": [
+    {
+      "matches": [
+        "https://chatgpt.com/*",
+        "https://chatglm.cn/*",
+        "https://chat.deepseek.com/*",
+        "https://www.kimi.com/*",
+        "https://kimi.moonshot.cn/*",
+        "https://www.doubao.com/*"
+      ],
+      "js": [
+        "adapters/heuristic.js",
+        "adapters/chatgpt.js",
+        "adapters/chatglm.js",
+        "adapters/deepseek.js",
+        "adapters/kimi.js",
+        "adapters/doubao.js",
+        "adapters/generic.js",
+        "adapters/registry.js",
+        "content.js"
+      ],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup/popup.html", "default_title": "Agent Bridge" }
+}

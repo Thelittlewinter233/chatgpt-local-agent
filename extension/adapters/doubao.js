@@ -1,4 +1,4 @@
-window.__abDoubaoAdapter = window.__abMakeHeuristicAdapter({
+var __abDoubaoAdapter = __abMakeHeuristicAdapter({
   id: 'doubao',
   matches: host => host === 'www.doubao.com' || host.endsWith('.doubao.com'),
   inputSelectors: ['textarea[data-testid="chat_text_input"]', '#flow-editor', 'textarea', '[contenteditable="true"]'],

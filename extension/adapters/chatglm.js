@@ -1,4 +1,4 @@
-window.__abChatglmAdapter = window.__abMakeHeuristicAdapter({
+var __abChatglmAdapter = __abMakeHeuristicAdapter({
   id: 'chatglm',
   matches: host => host === 'chatglm.cn' || host.endsWith('.chatglm.cn'),
   inputSelectors: ['textarea', '[contenteditable="true"]'],

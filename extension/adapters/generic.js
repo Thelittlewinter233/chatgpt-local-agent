@@ -1,4 +1,4 @@
-window.__abGenericAdapter = window.__abMakeHeuristicAdapter({
+var __abGenericAdapter = __abMakeHeuristicAdapter({
   id: 'generic',
   matches: () => true,
   inputSelectors: ['textarea', '[contenteditable="true"]'],

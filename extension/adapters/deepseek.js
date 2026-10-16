@@ -1,4 +1,4 @@
-window.__abDeepseekAdapter = window.__abMakeHeuristicAdapter({
+var __abDeepseekAdapter = __abMakeHeuristicAdapter({
   id: 'deepseek',
   matches: host => host === 'chat.deepseek.com' || host.endsWith('.deepseek.com'),
   inputSelectors: ['#chat-input', 'textarea', '[contenteditable="true"]'],

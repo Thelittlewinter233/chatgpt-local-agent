@@ -51,6 +51,22 @@
 4. **给 AI 协议**：新会话粘贴 `docs/chat-prompt.md` 分割线内内容（或按其说明配好自定义指令长期生效）
 5. **下任务**：如"在 tmp 下创建 hello.txt 内容为 hi，然后读回来确认"
 
+## 浏览器支持
+
+| 浏览器 | 支持方式 | 说明 |
+|---|---|---|
+| Chrome / Edge / 其他 Chromium | 直接加载 `extension/` 目录 | 零改动。Edge 在 `edge://extensions` 打开开发者模式后加载即可，所有 API 通用 |
+| Firefox 109+ | 使用 `manifest.firefox.json` | Firefox MV3 的 background 只认 event page 形式（`scripts`），不认 Chrome 的 `service_worker`，因此需要替换清单文件 |
+
+Firefox 加载步骤：
+
+1. 把 `extension/manifest.firefox.json` **重命名为 `manifest.json`**（覆盖原文件）
+2. Firefox 地址栏进 `about:debugging#/runtime/this-firefox` → "临时载入附加组件" → 选 `extension/manifest.json`
+3. 临时加载在浏览器重启后失效，需重新载入；持久使用请安装 **Firefox Developer Edition / Nightly**（`about:config` 里设 `xpinstall.signatures.required = false` 后可长期保留）
+4. 恢复 Chrome 使用时把 `manifest.json` 换回仓库原版（`git checkout -- extension/manifest.json`）
+
+已知差异：Firefox 的 content script 对 `window` 挂载采用 Xray 视角，适配器全局已改用 `var` 声明以兼容两个内核；其余 API（storage/tabs/action/WebSocket/剪贴板注入）双内核通用。
+
 ## 详细使用指南
 
 ### 5.1 一次完整任务的生命周期

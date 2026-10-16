@@ -36,7 +36,7 @@ async function sha1(text) {
 
 const q = sel => document.querySelector(sel);
 
-const ADAPTER = window.__AB_ADAPTER;
+const ADAPTER = __AB_ADAPTER;
 
 function isGenerating() {
   return ADAPTER.isGenerating();
@@ -288,25 +288,32 @@ function showConfirmBar(confirmId, preview) {
 const PROTOCOL_MARKER = '## 你是谁';
 
 let protocolText = null;
+let injecting = false;
 
 async function injectProtocol() {
-  const el = ADAPTER.findInput();
-  const existing = String((el && el.textContent) || '') + String((el && el.value) || '');
-  if (existing.includes(PROTOCOL_MARKER)) {
-    toast('AgentBridge: 输入框已含协议，无需重复注入');
-    return;
-  }
-  if (!protocolText) {
-    const r = await chrome.runtime.sendMessage({ type: 'get-prompt' }).catch(e => ({ ok: false, error: String(e) }));
-    if (!r || !r.ok) { toast('AgentBridge: 协议获取失败 ' + ((r && r.error) || '')); return; }
-    protocolText = r.text;
-  }
-  const filled = await ADAPTER.insertText(protocolText);
-  if (filled) {
-    highlight(true);
-    toast('AgentBridge: 协议已注入，可补充任务后发送（Alt+P 随时再注入）');
-  } else {
-    toast('AgentBridge: 注入失败（找不到输入框）');
+  if (injecting) return;
+  injecting = true;
+  try {
+    const el = ADAPTER.findInput();
+    const existing = String((el && el.textContent) || '') + String((el && el.value) || '');
+    if (existing.includes(PROTOCOL_MARKER)) {
+      toast('AgentBridge: 输入框已含协议，无需重复注入');
+      return;
+    }
+    if (!protocolText) {
+      const r = await chrome.runtime.sendMessage({ type: 'get-prompt' }).catch(e => ({ ok: false, error: String(e) }));
+      if (!r || !r.ok) { toast('AgentBridge: 协议获取失败 ' + ((r && r.error) || '')); return; }
+      protocolText = r.text;
+    }
+    const filled = await ADAPTER.insertText(protocolText);
+    if (filled) {
+      highlight(true);
+      toast('AgentBridge: 协议已注入，可补充任务后发送（Alt+P 随时再注入）');
+    } else {
+      toast('AgentBridge: 注入失败（找不到输入框）');
+    }
+  } finally {
+    injecting = false;
   }
 }
 

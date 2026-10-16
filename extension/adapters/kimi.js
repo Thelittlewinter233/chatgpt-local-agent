@@ -1,4 +1,4 @@
-window.__abKimiAdapter = window.__abMakeHeuristicAdapter({
+var __abKimiAdapter = __abMakeHeuristicAdapter({
   id: 'kimi',
   matches: host => host === 'www.kimi.com' || host.endsWith('.kimi.com') || host.endsWith('.moonshot.cn'),
   inputSelectors: ['#send-message-input', 'textarea', '[contenteditable="true"]'],

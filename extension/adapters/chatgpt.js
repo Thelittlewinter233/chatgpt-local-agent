@@ -1,10 +1,10 @@
-(() => {
+var __abChatgptAdapter = (() => {
   const q = sel => document.querySelector(sel);
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   const norm = s => String(s || '').replace(/\s+/g, '');
   const inputHasPending = el => norm((el.textContent || '') + (el.value || '')).includes('agent-result');
 
-  window.__abChatgptAdapter = {
+  return {
     id: 'chatgpt',
     matches: host => host === 'chatgpt.com' || host.endsWith('.chatgpt.com'),
     isGenerating() {
