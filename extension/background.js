@@ -223,10 +223,18 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         const o = await getStore('leaderTabId');
         id = o.leaderTabId != null ? o.leaderTabId : null;
       }
+      if (id != null) {
+        try { await chrome.tabs.get(id); }
+        catch {
+          id = null;
+          leaderTabId = null;
+          await chrome.storage.local.set({ leaderTabId: null });
+        }
+      }
       if (id == null && sender.tab) {
         id = sender.tab.id;
         leaderTabId = id;
-        chrome.storage.local.set({ leaderTabId: id });
+        await chrome.storage.local.set({ leaderTabId: id });
       }
       sendResponse({ leader: !!(sender.tab && sender.tab.id === id) });
     })();

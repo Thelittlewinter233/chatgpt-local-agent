@@ -120,10 +120,10 @@ async function checkCycle() {
   try {
     if (processing || opts.paused) return;
     if (Date.now() < cooldownUntil) return;
+    if (!(await isLeader())) { dbg('not-leader-tab'); return; }
     if (isGenerating()) { dbg('generating'); return; }
     const raw1 = findLatestAgentBlock();
     if (!raw1) { dbg('no-agent-block-on-page'); return; }
-    if (!(await isLeader())) { dbg('not-leader-tab'); return; }
     const normalized = raw1.body.trim();
     const hash8 = (await sha1(normalized)).slice(0, 8);
     const dedupKey = ADAPTER.id + ':' + hash8;
@@ -438,6 +438,7 @@ async function init() {
     }
   });
   dbg('content-script-active', ADAPTER.id + '@' + location.host);
+  isLeader();
   scheduleCheck(500);
 }
 
