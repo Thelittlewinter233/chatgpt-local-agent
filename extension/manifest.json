@@ -7,8 +7,8 @@
   "background": { "service_worker": "background.js" },
   "content_scripts": [
     {
-      "matches": ["https://chatgpt.com/*"],
-      "js": ["selectors.js", "content.js"],
+      "matches": ["https://chatgpt.com/*", "https://chatglm.cn/*"],
+      "js": ["adapters/chatgpt.js", "adapters/chatglm.js", "adapters/registry.js", "content.js"],
       "run_at": "document_idle"
     }
   ],

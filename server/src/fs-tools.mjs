@@ -24,21 +24,37 @@ export function createFsTools(config) {
     const file = checkPath(config, args.path);
     const stat = fs.statSync(file);
     if (!stat.isFile()) throw new Error(`Not a file: ${file}`);
-    let data;
+    let data, offset;
     if (args.tailBytes) {
       const tail = Math.min(Math.max(Number(args.tailBytes), 1), MAX_READ);
+      offset = Math.max(0, stat.size - tail);
       const fd = fs.openSync(file, 'r');
       try {
-        const start = Math.max(0, stat.size - tail);
-        data = Buffer.alloc(stat.size - start);
-        fs.readSync(fd, data, 0, data.length, start);
+        data = Buffer.alloc(stat.size - offset);
+        fs.readSync(fd, data, 0, data.length, offset);
       } finally { fs.closeSync(fd); }
     } else {
-      if (stat.size > MAX_READ) throw new Error(`File is ${stat.size} bytes; use tailBytes (max ${MAX_READ}) or shell tools`);
-      data = fs.readFileSync(file);
+      offset = Math.min(Math.max(Number(args.offsetBytes) || 0, 0), stat.size);
+      const maxBytes = Math.min(Math.max(Number(args.maxBytes) || MAX_READ, 1024), MAX_READ);
+      const fd = fs.openSync(file, 'r');
+      try {
+        data = Buffer.alloc(Math.min(maxBytes, stat.size - offset));
+        fs.readSync(fd, data, 0, data.length, offset);
+      } finally { fs.closeSync(fd); }
     }
     assertText(data);
-    return { path: file, size: stat.size, truncated: stat.size > data.length, content: data.toString('utf8'), sha256: hash(data) };
+    const nextOffset = offset + data.length;
+    const result = {
+      path: file,
+      size: stat.size,
+      offset,
+      nextOffset,
+      hasMore: nextOffset < stat.size,
+      truncated: nextOffset < stat.size,
+      content: data.toString('utf8')
+    };
+    if (nextOffset >= stat.size) result.sha256 = hash(data);
+    return result;
   }
 
   async function write(args) {

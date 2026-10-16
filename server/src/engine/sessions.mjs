@@ -65,7 +65,6 @@ export class Sessions {
     shell ||= this.config.defaultShell;
     if (!this.config.shells[shell]) throw new Error(`Unknown shell: ${shell}`);
     if (kind === 'job' && !command) throw new Error('command is required');
-    if (kind === 'terminal') throw new Error('Interactive terminals require node-pty, not available in this build');
     cwd ||= this.config.defaultCwd;
     if (!fs.statSync(cwd).isDirectory()) throw new Error('cwd must be an existing directory');
     if (requestId) {

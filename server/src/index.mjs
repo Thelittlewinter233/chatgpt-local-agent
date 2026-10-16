@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ROOT, loadConfig, atomicJson, readJson, secret, sleep } from './engine/common.mjs';
 import { Sessions } from './engine/sessions.mjs';
 import { createFsTools } from './fs-tools.mjs';
-import { classifyCommand } from './policy.mjs';
+import { classifyCommand, checkTerminalInput } from './policy.mjs';
 import { startWsServer } from './ws-server.mjs';
 
 const base = readJson(path.join(ROOT, 'config.json'));
@@ -32,7 +32,7 @@ function computerInfo() {
     notes: [
       'File tools are restricted to allowedRoots; shell cwd must also be inside allowedRoots.',
       'shell runs as the current Windows user; whitelist gates command heads, blacklist always wins.',
-      'Interactive PTY terminals are not available in this build; use shell wait/detach plus session_read.',
+      'terminal_start opens a persistent interactive PTY (variables/cwd/REPL persist across steps); use session_write then session_read; Ctrl+C via session_interrupt; close unused terminals. Terminal input is checked against the blacklist only.',
       'End a task with action "done" so the bridge resets its step counters.'
     ]
   };
@@ -93,6 +93,24 @@ async function dispatch(action, args, ctx) {
     case 'session_read': return sessions.request(args.sessionId, 'read', args);
     case 'session_list': return { sessions: await sessions.list() };
     case 'session_close': return sessions.request(args.sessionId, 'close');
+    case 'terminal_start': {
+      const state = await sessions.start({
+        kind: 'terminal',
+        shell: args.shell,
+        cwd: args.cwd,
+        env: {},
+        cols: args.cols,
+        rows: args.rows,
+        label: args.label || ''
+      });
+      return { ...state, sessionId: state.id };
+    }
+    case 'session_write': {
+      checkTerminalInput(config, args.input);
+      return sessions.request(args.sessionId, 'write', args);
+    }
+    case 'session_interrupt': return sessions.request(args.sessionId, 'interrupt');
+    case 'session_resize': return sessions.request(args.sessionId, 'resize', args);
     case 'done': return { acknowledged: true };
     default: throw new Error(`Unknown action: ${action}`);
   }

@@ -1,0 +1,88 @@
+(() => {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  const norm = s => String(s || '').replace(/\s+/g, '');
+  const inputHasPending = el => norm((el.textContent || '') + (el.value || '')).includes('agent-result');
+
+  function visible(el) {
+    const rect = el.getBoundingClientRect();
+    return !!(rect.width || rect.height) && getComputedStyle(el).visibility !== 'hidden';
+  }
+
+  function findTextarea() {
+    const list = [...document.querySelectorAll('textarea')].filter(visible);
+    return list.length ? list[list.length - 1] : null;
+  }
+
+  function findEditable() {
+    const list = [...document.querySelectorAll('[contenteditable="true"]')].filter(visible);
+    return list.length ? list[list.length - 1] : null;
+  }
+
+  function findSendButton() {
+    const candidates = [
+      ...document.querySelectorAll('button[class*="send" i], button[aria-label*="发送"], button[title*="发送"], button[type="submit"], [class*="send"] button')
+    ].filter(visible);
+    return candidates.length ? candidates[candidates.length - 1] : null;
+  }
+
+  window.__abChatglmAdapter = {
+    id: 'chatglm',
+    matches: host => host === 'chatglm.cn' || host.endsWith('.chatglm.cn'),
+    isGenerating() {
+      return !![...document.querySelectorAll('button')].find(b => /停止|stop/i.test((b.getAttribute('aria-label') || '') + (b.title || '')) && visible(b));
+    },
+    findInput() {
+      return findTextarea() || findEditable();
+    },
+    async insertText(text) {
+      const el = this.findInput();
+      if (!el) return false;
+      el.focus();
+      try {
+        const dt = new DataTransfer();
+        dt.setData('text/plain', text);
+        el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
+      } catch { }
+      await sleep(250);
+      if (inputHasPending(el)) return true;
+      try {
+        const sel = window.getSelection();
+        sel.removeAllRanges();
+        const range = document.createRange();
+        range.selectNodeContents(el);
+        range.collapse(false);
+        sel.addRange(range);
+        document.execCommand('insertText', false, text);
+      } catch { }
+      await sleep(250);
+      if (inputHasPending(el)) return true;
+      if (el.tagName === 'TEXTAREA') {
+        const proto = Object.getPrototypeOf(el);
+        const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
+        if (setter) setter.call(el, (el.value || '') + text);
+        else el.value = (el.value || '') + text;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        return true;
+      }
+      return false;
+    },
+    async send() {
+      const el = this.findInput();
+      if (!el) return false;
+      for (let i = 0; i < 3; i++) {
+        const btn = findSendButton();
+        if (btn && !btn.disabled) {
+          btn.click();
+          await sleep(500);
+          if (!inputHasPending(el)) return true;
+        }
+        el.focus();
+        el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
+        await sleep(600);
+        if (!inputHasPending(el)) return true;
+        await sleep(400);
+      }
+      return false;
+    }
+  };
+})();

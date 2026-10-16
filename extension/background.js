@@ -7,6 +7,7 @@ let backoffIdx = 0;
 let msgCounter = 0;
 let lastAckId = 0;
 let contentTabId = null;
+let leaderTabId = null;
 const pending = new Map();
 const BACKOFF = [1000, 2000, 5000, 10000, 30000];
 
@@ -63,6 +64,15 @@ async function connect() {
   ws.onerror = () => { };
 }
 
+async function targetTabId() {
+  if (leaderTabId != null) return leaderTabId;
+  const o = await getStore('leaderTabId');
+  if (o.leaderTabId != null) { leaderTabId = o.leaderTabId; return leaderTabId; }
+  if (contentTabId != null) return contentTabId;
+  const o2 = await getStore('contentTabId');
+  return o2.contentTabId != null ? o2.contentTabId : null;
+}
+
 async function handleFrame(m) {
   if (m.type === 'hello_ok') {
     authed = true;
@@ -77,9 +87,15 @@ async function handleFrame(m) {
   }
   if (m.type === 'pong') return;
   if (m.type === 'confirm-required') {
-    if (contentTabId != null) {
-      chrome.tabs.sendMessage(contentTabId, { type: 'confirm-request', confirmId: m.confirmId, preview: m.preview }).catch(() => { });
-    }
+    (async () => {
+      const tabId = await targetTabId();
+      if (tabId != null) {
+        chrome.tabs.sendMessage(tabId, { type: 'confirm-request', confirmId: m.confirmId, preview: m.preview })
+          .catch(e => console.log('[AgentBridge] confirm relay failed:', e && e.message));
+      } else {
+        console.log('[AgentBridge] confirm required but no chatgpt tab registered');
+      }
+    })();
     return;
   }
   if (m.type === 'ack') {
@@ -126,8 +142,47 @@ function sendCmd(msg) {
 chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   if (msg.type === 'content-hello') {
     contentTabId = sender.tab ? sender.tab.id : null;
+    if (contentTabId != null) chrome.storage.local.set({ contentTabId });
     sendResponse({ ok: true });
     return;
+  }
+  if (msg.type === 'am-i-leader') {
+    (async () => {
+      let id = leaderTabId;
+      if (id == null) {
+        const o = await getStore('leaderTabId');
+        id = o.leaderTabId != null ? o.leaderTabId : null;
+      }
+      if (id == null && sender.tab) {
+        id = sender.tab.id;
+        leaderTabId = id;
+        chrome.storage.local.set({ leaderTabId: id });
+      }
+      sendResponse({ leader: !!(sender.tab && sender.tab.id === id) });
+    })();
+    return true;
+  }
+  if (msg.type === 'claim-leader') {
+    (async () => {
+      if (sender.tab) {
+        leaderTabId = sender.tab.id;
+        await chrome.storage.local.set({ leaderTabId });
+      }
+      sendResponse({ ok: true });
+    })();
+    return true;
+  }
+  if (msg.type === 'test-confirm') {
+    (async () => {
+      const tabId = await targetTabId();
+      if (tabId != null) {
+        chrome.tabs.sendMessage(tabId, { type: 'confirm-request', confirmId: 'test', preview: '[仅 UI 测试] 真实场景会显示待执行的命令' }).catch(() => { });
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, error: '未找到 chatgpt.com 标签页，请先打开并刷新' });
+      }
+    })();
+    return true;
   }
   if (msg.type === 'confirm-resolve') {
     send({ type: 'confirm-resolve', confirmId: msg.confirmId, approved: msg.approved });
@@ -164,6 +219,17 @@ chrome.storage.onChanged.addListener((changes, area) => {
     backoffIdx = 0;
     connect();
   }
+});
+
+chrome.tabs.onRemoved.addListener(async tabId => {
+  if (leaderTabId === tabId) {
+    leaderTabId = null;
+    await chrome.storage.local.set({ leaderTabId: null });
+  } else {
+    const o = await getStore('leaderTabId');
+    if (o.leaderTabId === tabId) await chrome.storage.local.set({ leaderTabId: null });
+  }
+  if (contentTabId === tabId) contentTabId = null;
 });
 
 connect();

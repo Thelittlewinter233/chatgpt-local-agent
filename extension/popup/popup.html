@@ -23,13 +23,16 @@
   <div class="row"><span id="dot" class="dot"></span><span id="status">…</span></div>
   <div id="err" class="err"></div>
   <div id="dbg" class="dbg"></div>
+  <div id="guard" class="dbg"></div>
   <label>服务端 Token（server/config.local.json）</label>
   <input id="token" type="password" placeholder="粘贴 64 位 token">
   <button id="save">保存并测试连接</button>
   <div class="opts">
     <div class="row"><label><input id="autoSend" type="checkbox"> 自动发送执行结果</label></div>
     <div class="row"><label><input id="paused" type="checkbox"> 暂停监听（不执行新指令）</label></div>
+    <div class="row"><label style="margin:0">单任务步数上限</label><input id="maxSteps" type="number" min="10" max="100" step="5" style="width:64px"></div>
     <button id="reset">新任务（重置计数与熔断）</button>
+    <button id="testConfirm">测试确认条 UI</button>
   </div>
   <script src="popup.js"></script>
 </body>

@@ -55,6 +55,26 @@ async function run() {
   assert(!outside.ok && outside.denied, 'path outside roots denial');
   const confirmed = await cmd('shell', { command: 'Get-Date -Format o', waitMs: 10000 });
   assert(confirmed.ok && confirmed.data.exitCode === 0, 'confirm flow approves non-whitelisted command');
+  const term = await cmd('terminal_start', { shell: 'powershell' });
+  assert(term.ok && term.data.sessionId, 'terminal_start returns sessionId');
+  const tid = term.data.sessionId;
+  await new Promise(r => setTimeout(r, 2000));
+  const wr = await cmd('session_write', { sessionId: tid, input: 'Write-Output smoke-term-ok', newline: true });
+  assert(wr.ok, 'session_write accepted');
+  let tout = '';
+  let toffset = 0;
+  const tdeadline = Date.now() + 15000;
+  while (Date.now() < tdeadline) {
+    const r = await cmd('session_read', { sessionId: tid, offset: toffset, maxBytes: 262144, waitMs: 500 });
+    tout += (r.data && r.data.output) || '';
+    toffset = (r.data && r.data.nextOffset) || toffset;
+    if (tout.includes('smoke-term-ok')) break;
+  }
+  assert(tout.includes('smoke-term-ok'), 'interactive terminal output roundtrip');
+  const deniedWrite = await cmd('session_write', { sessionId: tid, input: 'Remove-Item x' });
+  assert(!deniedWrite.ok && deniedWrite.denied, 'terminal input blacklist denial');
+  const cl = await cmd('session_close', { sessionId: tid });
+  assert(cl.ok, 'terminal close');
   console.log('SMOKE PASS');
   clearTimeout(timeout);
   ws.close();

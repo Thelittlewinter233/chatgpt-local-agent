@@ -4,12 +4,18 @@
   "private": true,
   "license": "MIT",
   "type": "module",
-  "engines": { "node": ">=22" },
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "start": "node src/index.mjs",
     "test": "node --test"
   },
   "dependencies": {
+    "node-pty": "^1.1.0",
     "ws": "^8.18.0"
+  },
+  "allowScripts": {
+    "node-pty@1.1.0": true
   }
 }

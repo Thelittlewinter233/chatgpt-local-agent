@@ -93,6 +93,12 @@ const server = http.createServer(async (req, res) => {
         else throw new Error('stdin is closed');
         return json(res, 200, { ...publicState(state), accepted: true });
       }
+      case '/resize': {
+        if (!terminal || state.status !== 'running') throw new Error('No active PTY');
+        if (!Number.isInteger(args.cols) || !Number.isInteger(args.rows) || args.cols < 20 || args.cols > 500 || args.rows < 5 || args.rows > 200) throw new Error('Invalid dimensions');
+        terminal.resize(args.cols, args.rows);
+        return json(res, 200, publicState(state));
+      }
       case '/interrupt': {
         if (state.status !== 'running') throw new Error(`Session is ${state.status}`);
         if (!terminal) throw new Error('Ctrl+C requires a terminal; use session_close for a pipe job');

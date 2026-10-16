@@ -30,6 +30,25 @@ export function checkPath(config, p) {
   return resolved;
 }
 
+export function checkTerminalInput(config, input) {
+  if (typeof input !== 'string' || !input) {
+    const e = new Error('input is required');
+    e.denied = true;
+    throw e;
+  }
+  if (input.length > 100000) {
+    const e = new Error('terminal input exceeds 100000 characters');
+    e.denied = true;
+    throw e;
+  }
+  for (const re of DENY_PATTERNS) if (re.test(input)) {
+    const e = new Error(`blacklisted pattern in terminal input: ${re}`);
+    e.denied = true;
+    throw e;
+  }
+  return { ok: true };
+}
+
 export function classifyCommand(config, command, cwd) {
   const deny = reason => ({ kind: 'deny', reason });
   if (typeof command !== 'string' || !command.trim()) return deny('command is required');

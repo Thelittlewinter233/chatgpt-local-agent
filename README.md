@@ -26,9 +26,13 @@
 │   ├── src/…                  # ws-server / policy / fs-tools / engine(vendored)
 │   └── test/…                 # node --test 单元与集成测试
 ├── extension/                 # Chrome MV3 扩展（加载解压即可用）
-│   ├── selectors.js           # 全部 DOM 选择器集中在这（改版只改这里）
-│   ├── content.js             # 检测/去重/回填/发送/确认条
-│   ├── background.js          # WS 状态机/重连/结果重放
+│   ├── manifest.json
+│   ├── adapters/              # 站点适配器：每个 AI 网页聊天一个文件
+│   │   ├── chatgpt.js         # chatgpt.com（ProseMirror 输入框）
+│   │   ├── chatglm.js         # chatglm.cn 智谱清言（启发式首版，按实测迭代）
+│   │   └── registry.js        # 按 location.hostname 选择适配器
+│   ├── content.js             # 站点无关主循环：检测/去重/回填/发送/确认条
+│   ├── background.js          # WS 状态机/重连/结果重放/多标签仲裁
 │   └── popup/                 # 配对 Token、暂停、自动发送、心跳诊断
 └── docs/
     ├── chat-prompt.md         # 协议模板完整版（新会话首条粘贴）
@@ -60,8 +64,19 @@
 - WS 仅监听 127.0.0.1；Origin 必须是 chrome-extension://；配对 token 握手，错误 3 次封禁 60 秒
 - 文件操作限定 `allowedRoots`；shell cwd 同样受限（注意：**shell 本身不是沙箱**，白名单只是第一道闸）
 - 页内确认条：白名单外命令必须人工批准，显示完整命令预览
-- 扩展侧护栏：单任务 15 步上限、连续 3 次失败熔断、同一指令重复死循环熔断、120 秒响应超时
+- 扩展侧护栏：单任务步数上限（默认 30，popup 可调 10–100）、连续 3 次失败熔断、同一指令重复死循环熔断、120 秒响应超时
 - popup 可随时"暂停监听"或关闭"自动发送"（变为填入待手动回车）
+
+## 多站点支持
+
+桥接层与协议与站点无关，`adapters/` 里每个 AI 网页聊天一个适配器（统一接口：`isGenerating / findInput / insertText / send`）。当前支持：
+
+| 站点 | 适配器 | 状态 |
+|---|---|---|
+| chatgpt.com | `chatgpt.js` | 已实测 |
+| chatglm.cn（智谱清言） | `chatglm.js` | 启发式首版，需实测迭代 |
+
+新增站点三步：`manifest.json` 的 `matches` 加域名 → 新建适配器文件（可从 `chatglm.js` 复制启发式实现起步）→ `registry.js` 注册。去重记忆按 `适配器id:hash` 隔离，多站点互不干扰。协议模板各站通用（粘贴同一份 `docs/chat-prompt.md` 即可）。
 
 ## 日常使用
 
@@ -95,9 +110,9 @@ node smoke.mjs  # 无扩展全链路自测（需服务已启动）
 
 ## 已知边界
 
-- 无交互式终端（node-pty）：REPL/SSH/交互输入类程序不支持，用一次性命令或后台会话替代
-- 同时开多个 chatgpt.com 任务对话会双执行，一次只跑一个
-- 回填结果超 8000 字符会截断（AI 可用 `tailBytes`/`session_read` 补读）
+- 交互式终端已支持（node-pty / ConPTY）：`terminal_start` + `session_write`/`session_read`/`session_interrupt`/`session_resize`；终端输入过黑名单检查（不做白名单，注意终端本质不是沙箱）
+- 多标签页仲裁：第一个打开的 chatgpt.com 标签自动成为"任务标签"，其他标签左下角显示"此页非任务标签 · 点击接管"，确认条只弹在任务标签
+- 回填结果超过约 9–12K 字符时合法截断并附 `nextOffset` 续读指引（`session_read`/`fs_read offsetBytes` 翻页）
 - chatgpt.com 前端改版可能使选择器失效（已集中在 `selectors.js`，按故障排查表修）
 
 ## 安全须知

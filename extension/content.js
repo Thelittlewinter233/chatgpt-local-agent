@@ -4,7 +4,7 @@ const store = {
   set: obj => chrome.storage.local.set(obj)
 };
 
-let opts = { paused: false, autoSend: true };
+let opts = { paused: false, autoSend: true, maxSteps: 30 };
 let guard = { step: 0, failStreak: 0, lastHash8: '' };
 let seen = [];
 let processing = false;
@@ -13,13 +13,13 @@ let lastDbgKey = '';
 
 async function loadState() {
   const o = await store.get(['ab_opts', 'ab_guard', 'ab_seen']);
-  opts = Object.assign({ paused: false, autoSend: true }, o.ab_opts || {});
+  opts = Object.assign({ paused: false, autoSend: true, maxSteps: 30 }, o.ab_opts || {});
   guard = Object.assign({ step: 0, failStreak: 0, lastHash8: '' }, o.ab_guard || {});
   seen = o.ab_seen || [];
 }
 
 const saveState = () => store.set({ ab_opts: opts, ab_guard: guard, ab_seen: seen.slice(-300) });
-const markSeen = hash8 => { seen.push(hash8); if (seen.length > 500) seen = seen.slice(-300); saveState(); };
+const markSeen = key => { seen.push(key); if (seen.length > 500) seen = seen.slice(-300); saveState(); };
 
 async function dbg(stage, extra) {
   const key = stage + '|' + (extra || '');
@@ -35,11 +35,11 @@ async function sha1(text) {
 }
 
 const q = sel => document.querySelector(sel);
-const norm = s => String(s || '').replace(/\s+/g, '');
-const inputHasPending = el => norm((el.textContent || '') + (el.value || '')).includes('agent-result');
+
+const ADAPTER = window.__AB_ADAPTER;
 
 function isGenerating() {
-  return !!(q(AGENT_SELECTORS.stop) || q(AGENT_SELECTORS.stopAlt));
+  return ADAPTER.isGenerating();
 }
 
 function cleanHeader(text) {
@@ -79,22 +79,59 @@ function scheduleCheck(delay = 350) {
   checkTimer = setTimeout(checkCycle, delay);
 }
 
+let leaderCache = null;
+
+async function isLeader() {
+  if (leaderCache && Date.now() - leaderCache.at < 5000) return leaderCache.value;
+  let value = true;
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'am-i-leader' });
+    value = !!(r && r.leader);
+  } catch { }
+  leaderCache = { at: Date.now(), value };
+  ensureLeaderPill(value);
+  return value;
+}
+
+function ensureLeaderPill(isLeader) {
+  const old = document.getElementById('ab-leader-pill');
+  if (isLeader) {
+    if (old) old.remove();
+    return;
+  }
+  if (old) return;
+  const pill = document.createElement('div');
+  pill.id = 'ab-leader-pill';
+  pill.textContent = '此页非任务标签 · 点击接管';
+  pill.style.cssText = 'position:fixed;z-index:2147483647;left:16px;bottom:16px;padding:8px 14px;background:#7c2d12;color:#fff;font:12px/18px system-ui,sans-serif;border-radius:999px;cursor:pointer;box-shadow:0 4px 12px rgba(0,0,0,.3)';
+  pill.addEventListener('click', async () => {
+    try { await chrome.runtime.sendMessage({ type: 'claim-leader' }); } catch { }
+    leaderCache = { at: 0, value: true };
+    pill.remove();
+    toast('AgentBridge: 本标签已接管为任务标签');
+    scheduleCheck(200);
+  });
+  document.body.appendChild(pill);
+}
+
 async function checkCycle() {
   try {
     if (processing || opts.paused) return;
     if (isGenerating()) { dbg('generating'); return; }
     const raw1 = findLatestAgentBlock();
     if (!raw1) { dbg('no-agent-block-on-page'); return; }
+    if (!(await isLeader())) { dbg('not-leader-tab'); return; }
     const normalized = raw1.trim();
     const hash8 = (await sha1(normalized)).slice(0, 8);
-    if (seen.includes(hash8)) { dbg('block-already-seen', hash8); return; }
+    const dedupKey = ADAPTER.id + ':' + hash8;
+    if (seen.includes(dedupKey)) { dbg('block-already-seen', dedupKey); return; }
     await sleep(600);
     if (isGenerating()) return;
     const raw2 = findLatestAgentBlock();
     if (!raw2 || raw2.trim() !== normalized) { dbg('stability-wait'); scheduleCheck(1000); return; }
     dbg('agent-block-detected', normalized.slice(0, 80));
     processing = true;
-    try { await handleBlock(normalized, hash8); }
+    try { await handleBlock(normalized, dedupKey, hash8); }
     finally { processing = false; }
   } catch (e) {
     dbg('check-error', String((e && e.stack) || e));
@@ -102,31 +139,56 @@ async function checkCycle() {
   }
 }
 
-async function handleBlock(raw, hash8) {
+const RESULT_CHAR_LIMIT = 12000;
+const FIELD_CHAR_LIMIT = 9000;
+
+function buildResultBody(hash8, payload) {
+  const hint = '输出被截断。shell/会话结果用 session_read {sessionId, offset} 续读（offset 用返回的 nextOffset）；文件用 fs_read {path, offsetBytes} 续读（offsetBytes 用返回的 nextOffset），或 tailBytes 读末尾。';
+  let slim = payload;
+  if (payload && payload.ok && payload.data && typeof payload.data === 'object') {
+    const d = { ...payload.data };
+    let cut = false;
+    for (const key of ['output', 'content']) {
+      if (typeof d[key] === 'string' && d[key].length > FIELD_CHAR_LIMIT) {
+        d[key] = d[key].slice(0, FIELD_CHAR_LIMIT) + '\n…[bridge-truncated]';
+        cut = true;
+      }
+    }
+    if (cut) slim = { ...payload, data: d, truncated: true, hint };
+  }
+  let body = JSON.stringify({ for: hash8, ...slim });
+  if (body.length > RESULT_CHAR_LIMIT) {
+    body = JSON.stringify({ for: hash8, ok: !!(payload && payload.ok), truncated: true, hint, preview: body.slice(0, RESULT_CHAR_LIMIT - 400) });
+  }
+  return body;
+}
+
+async function handleBlock(raw, key, hash8) {
   let cmd;
   try { cmd = JSON.parse(raw); }
   catch { await respond(hash8, { ok: false, error: 'invalid agent json' }); return; }
   if (!cmd || typeof cmd.action !== 'string') { await respond(hash8, { ok: false, error: 'agent block missing action' }); return; }
   if (cmd.action === 'done') {
     guard = { step: 0, failStreak: 0, lastHash8: '' };
-    markSeen(hash8);
+    markSeen(key);
     saveState();
     toast('AgentBridge: 任务完成，计数已重置');
     return;
   }
   const o = await store.get('pend');
   const pend = o.pend || {};
-  if (pend[hash8]) {
-    const payload = pend[hash8].payload;
-    delete pend[hash8];
+  if (pend[key]) {
+    const payload = pend[key].payload;
+    delete pend[key];
     await store.set({ pend });
-    await deliver(hash8, payload);
+    await deliver(key, hash8, payload);
     return;
   }
-  if (guard.step >= 15) { await respond(hash8, { ok: false, denied: 'single-task step limit (15) reached; press New Task in the popup to continue' }); return; }
+  const limit = Math.min(Math.max(Number(opts.maxSteps) || 30, 10), 100);
+  if (guard.step >= limit) { await respond(hash8, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` }); return; }
   if (guard.failStreak >= 3) { await respond(hash8, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' }); return; }
-  if (guard.lastHash8 && guard.lastHash8 === hash8) { await respond(hash8, { ok: false, denied: 'same command repeated; possible loop' }); return; }
-  markSeen(hash8);
+  if (guard.lastHash8 && guard.lastHash8 === key) { await respond(hash8, { ok: false, denied: 'same command repeated; possible loop' }); return; }
+  markSeen(key);
   toast('AgentBridge: 执行 ' + cmd.action + ' …');
   let payload;
   try {
@@ -135,83 +197,32 @@ async function handleBlock(raw, hash8) {
     payload = { ok: false, error: 'bridge unavailable: ' + ((e && e.message) || e) };
   }
   dbg('cmd-done', cmd.action + ' -> ' + JSON.stringify(payload).slice(0, 120));
-  await deliver(hash8, payload);
+  await deliver(key, hash8, payload);
 }
 
-async function deliver(hash8, payload) {
+async function deliver(key, hash8, payload) {
   guard.step += 1;
   guard.failStreak = payload && payload.ok ? 0 : guard.failStreak + 1;
-  guard.lastHash8 = hash8;
+  guard.lastHash8 = key;
   await saveState();
   await respond(hash8, payload);
 }
 
 async function respond(hash8, payload) {
-  const body = JSON.stringify({ for: hash8, ...payload });
-  const trimmed = body.length > 8000 ? body.slice(0, 8000) + '...[truncated]' : body;
-  const filled = await fillInput('```agent-result\n' + trimmed + '\n```');
+  const text = '```agent-result\n' + buildResultBody(hash8, payload) + '\n```';
+  const filled = await ADAPTER.insertText(text);
   if (!filled) { dbg('fill-failed'); toast('AgentBridge: 回填失败（找不到输入框），请手动把结果发给 AI'); return; }
   const o = await store.get('ab_opts');
-  const current = Object.assign({ paused: false, autoSend: true }, o.ab_opts || {});
+  const current = Object.assign({ paused: false, autoSend: true, maxSteps: 30 }, o.ab_opts || {});
   if (current.paused) { highlight(true); toast('AgentBridge: 已填入未发送（监听已暂停）'); return; }
   if (current.autoSend === false) { highlight(true); toast('AgentBridge: 已填入未发送（自动发送已关闭）'); return; }
-  const sent = await sendCurrent();
+  const sent = await ADAPTER.send();
   if (!sent) { highlight(true); toast('AgentBridge: 已填入未发送（发送失败），请手动按回车发送'); }
   else highlight(false);
 }
 
-async function fillInput(text) {
-  const el = q(AGENT_SELECTORS.input) || q(AGENT_SELECTORS.inputAlt);
-  if (!el) return false;
-  el.focus();
-  try {
-    const dt = new DataTransfer();
-    dt.setData('text/plain', text);
-    el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
-  } catch { }
-  await sleep(250);
-  if (norm((el.textContent || '') + (el.value || '')).includes(norm(text).slice(0, 30))) return true;
-  try {
-    const sel = window.getSelection();
-    sel.removeAllRanges();
-    const range = document.createRange();
-    range.selectNodeContents(el);
-    range.collapse(false);
-    sel.addRange(range);
-    document.execCommand('insertText', false, text);
-  } catch { }
-  await sleep(250);
-  if (norm((el.textContent || '') + (el.value || '')).includes(norm(text).slice(0, 30))) return true;
-  if (el.tagName === 'TEXTAREA') {
-    el.value = (el.value || '') + text;
-    el.dispatchEvent(new Event('input', { bubbles: true }));
-    return true;
-  }
-  return false;
-}
-
-async function sendCurrent() {
-  const el = q(AGENT_SELECTORS.input) || q(AGENT_SELECTORS.inputAlt);
-  if (!el) return false;
-  for (let i = 0; i < 3; i++) {
-    const btn = q(AGENT_SELECTORS.send) || q(AGENT_SELECTORS.sendAlt) || q(AGENT_SELECTORS.sendCn);
-    if (btn && !btn.disabled) {
-      btn.click();
-      await sleep(500);
-      if (!inputHasPending(el)) { dbg('send-ok', 'button click'); return true; }
-    }
-    el.focus();
-    el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-    await sleep(600);
-    if (!inputHasPending(el)) { dbg('send-ok', 'enter key'); return true; }
-    await sleep(400);
-  }
-  dbg('send-failed');
-  return false;
-}
-
 function highlight(on) {
-  const el = q(AGENT_SELECTORS.input) || q(AGENT_SELECTORS.inputAlt);
+  const el = ADAPTER.findInput();
   if (el) el.style.outline = on ? '2px solid #f59e0b' : '';
 }
 
@@ -271,6 +282,10 @@ function showConfirmBar(confirmId, preview) {
 
 async function init() {
   await loadState();
+  if (!ADAPTER) {
+    dbg('no-adapter-for-this-site', location.host);
+    return;
+  }
   try { chrome.runtime.sendMessage({ type: 'content-hello' }).catch(() => { }); } catch { }
   new MutationObserver(() => scheduleCheck()).observe(document.body, { subtree: true, childList: true, characterData: true });
   setInterval(() => scheduleCheck(), 2500);
@@ -283,7 +298,7 @@ async function init() {
   });
   chrome.storage.onChanged.addListener((changes, area) => {
     if (area !== 'local') return;
-    if (changes.ab_opts) opts = Object.assign({ paused: false, autoSend: true }, changes.ab_opts.newValue || {});
+    if (changes.ab_opts) opts = Object.assign({ paused: false, autoSend: true, maxSteps: 30 }, changes.ab_opts.newValue || {});
     if (changes.ab_seen) seen = changes.ab_seen.newValue || [];
     if (changes.ab_guard) guard = Object.assign({ step: 0, failStreak: 0, lastHash8: '' }, changes.ab_guard.newValue || {});
     if (changes.resetGuard) {
@@ -293,7 +308,7 @@ async function init() {
       toast('AgentBridge: 新任务，计数已重置');
     }
   });
-  dbg('content-script-active', location.host);
+  dbg('content-script-active', ADAPTER.id + '@' + location.host);
   scheduleCheck(500);
 }
 

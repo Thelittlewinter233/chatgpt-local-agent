@@ -48,7 +48,30 @@ test('unknown session id is rejected', async () => {
   await assert.rejects(() => sessions.request('not-a-uuid', 'read'));
 });
 
-test('terminal kind is rejected in this build', async () => {
+test('interactive PTY terminal supports write/read/interrupt and close', async () => {
   const sessions = new Sessions(JSON.parse(fs.readFileSync(configPath, 'utf8')));
-  await assert.rejects(() => sessions.start({ kind: 'terminal' }), /node-pty/);
+  const started = await sessions.start({ kind: 'terminal', shell: 'powershell', cols: 100, rows: 24 });
+  const id = started.id;
+  assert.equal(started.status, 'running');
+  await new Promise(r => setTimeout(r, 2000));
+  await sessions.request(id, 'write', { input: 'Write-Output "term-ok"', newline: true });
+  const readUntil = async (marker, timeoutMs) => {
+    let offset = 0, out = '';
+    const deadline = Date.now() + timeoutMs;
+    while (Date.now() < deadline) {
+      const r = await sessions.request(id, 'read', { offset, maxBytes: 262144, waitMs: 500 });
+      out += r.output || '';
+      offset = r.nextOffset;
+      if (out.includes(marker)) return out;
+    }
+    return out;
+  };
+  const out = await readUntil('term-ok', 15000);
+  assert.ok(out.includes('term-ok'), 'PTY output should contain term-ok');
+  await sessions.request(id, 'write', { input: '$persisted = 123', newline: true });
+  await sessions.request(id, 'write', { input: 'Write-Output "persist=$persisted"', newline: true });
+  const out2 = await readUntil('persist=123', 15000);
+  assert.ok(out2.includes('persist=123'), 'PTY should persist variables across writes');
+  const closed = await sessions.request(id, 'close');
+  assert.equal(closed.status, 'terminated');
 });
