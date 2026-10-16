@@ -49,7 +49,7 @@ function cleanHeader(text) {
 }
 
 function codeBodyIfAgent(pre) {
-  const code = pre.querySelector('code');
+  const code = pre.querySelector('code, span');
   if (!code) return null;
   const body = (code.textContent || '').trim();
   if (!body) return null;
