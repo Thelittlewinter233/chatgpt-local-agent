@@ -39,9 +39,7 @@ function computerInfo() {
     defaultShell: config.defaultShell,
     shells: Object.keys(config.shells),
     defaultCwd: config.defaultCwd,
-    allowedRoots: config.allowedRoots,
     policyMode: config.policy?.defaultAllow ? 'blacklist-only' : 'whitelist',
-    whitelist: config.policy?.whitelist || [],
     limits: { maxActiveSessions: config.maxActiveSessions, waitMsMax: 20000, commandMaxLength: 4000 },
     notes: [
       'File tools are restricted to allowedRoots; shell cwd must also be inside allowedRoots.',
@@ -94,7 +92,7 @@ async function runShell(args, ctx) {
 const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir']);
 
 async function dispatch(action, args, ctx) {
-  const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'shell', 'terminal_start', 'session_write', 'session_close'];
+  const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'fs_delete', 'shell', 'terminal_start', 'session_write', 'session_close'];
   const started = Date.now();
   let outcome = 'ok';
   let bypassed = false;
@@ -148,6 +146,15 @@ async function route(action, args, ctx) {
     case 'fs_move': return fsTools.move(args, ctx);
     case 'fs_mkdir': return fsTools.mkdir(args, ctx);
     case 'fs_info': return fsTools.info(args, ctx);
+    case 'fs_delete': {
+      const approved = await ctx.requestConfirm(`删除文件：${args.path}`);
+      if (!approved) {
+        const denied = new Error(`user rejected deletion of ${args.path}`);
+        denied.denied = true;
+        throw denied;
+      }
+      return fsTools.del(args, ctx);
+    }
     case 'shell': return runShell(args, ctx);
     case 'session_read': return sessions.request(args.sessionId, 'read', args);
     case 'session_list': return { sessions: await sessions.list() };

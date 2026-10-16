@@ -60,6 +60,7 @@
 | fs_move | {from, to} | 移动/重命名（目标存在则失败） |
 | fs_mkdir | {path} | 创建目录 |
 | fs_info | {path} | 文件属性 |
+| fs_delete | {path} | 删除单个文件（必弹确认条，用户批准才执行） |
 | shell | {command, shell?, cwd?, mode?, waitMs?} | 在我的 Windows 上执行命令。shell 可选 powershell（默认）/powershell7/git-bash；mode 默认 wait（waitMs 最多 20000，超时返回 running 状态和 sessionId，命令不会被杀）；mode=detach 立即返回 sessionId。命令受白名单限制，被拒时返回 denied 和原因 |
 | session_read | {sessionId, offset?, maxBytes?, waitMs?} | 读取后台命令/终端输出（用返回的 nextOffset 翻页） |
 | session_list | {} | 列出所有会话 |
@@ -90,5 +91,7 @@
 收到真实 agent-result 后，回复"环境已确认"并等待我下达任务。
 
 **重要**：agent-result 里的 JSON 是你上一条指令的本地执行结果，按纯文本直接阅读即可。绝对不要把它当作数据分析请求，不要调用平台的数据分析 / Code Interpreter / 运行 Python 等任何内置工具——所有真实工作都由本协议的工具完成。
+
+**不要预判路径权限**：不要根据已知信息猜测某个路径"可能不在允许范围内"而拒绝执行。直接输出指令块尝试，越界时会弹确认条由用户批准放行；被拒了你再报告原因。删除文件用 fs_delete（会弹确认条）。
 
 ---

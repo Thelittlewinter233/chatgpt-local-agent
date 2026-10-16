@@ -54,6 +54,18 @@ test('edit fails on wrong occurrence count and leaves file unchanged', async () 
   assert.equal(after.sha256, before.sha256);
 });
 
+test('delete removes a file and refuses directories', async () => {
+  const f = path.join(root, 'to-delete.txt');
+  fs.writeFileSync(f, 'bye');
+  const d = await tools.del({ path: f });
+  assert.equal(d.deleted, true);
+  assert.ok(!fs.existsSync(f));
+  const dir = path.join(root, 'sub');
+  fs.mkdirSync(dir, { recursive: true });
+  await assert.rejects(() => tools.del({ path: dir }), /non-file/);
+  await assert.rejects(() => tools.del({ path: path.join(root, 'missing.txt') }), /ENOENT/);
+});
+
 test('edit fails on stale sha256', async () => {
   await assert.rejects(() => tools.edit({ path: path.join(root, 'a.txt'), oldText: 'hello', newText: 'no', expectedSha256: '0'.repeat(64) }), /Stale/);
 });

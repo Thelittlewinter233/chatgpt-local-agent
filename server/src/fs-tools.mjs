@@ -157,5 +157,13 @@ export function createFsTools(config) {
     };
   }
 
-  return { read, write, edit, list, tree, search, move, mkdir, info };
+  async function del(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    const stat = fs.statSync(file);
+    if (!stat.isFile()) throw new Error(`Refusing to delete non-file target: ${file}`);
+    fs.unlinkSync(file);
+    return { path: file, deleted: true };
+  }
+
+  return { read, write, edit, list, tree, search, move, mkdir, info, del };
 }
