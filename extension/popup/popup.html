@@ -1,0 +1,36 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { width: 300px; margin: 0; padding: 14px; font: 13px/20px system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; }
+    h1 { font-size: 14px; margin: 0 0 10px; }
+    .row { display: flex; align-items: center; gap: 8px; margin: 8px 0; }
+    .dot { width: 10px; height: 10px; border-radius: 50%; background: #9ca3af; flex: 0 0 auto; }
+    .dot.on { background: #10b981; }
+    .dot.off { background: #ef4444; }
+    label { display: block; margin: 10px 0 4px; color: #374151; }
+    input[type="password"], input[type="text"] { width: 100%; box-sizing: border-box; padding: 6px 8px; border: 1px solid #d1d5db; border-radius: 6px; font: 12px/18px monospace; }
+    button { margin: 8px 0; padding: 6px 12px; border: 1px solid #d1d5db; border-radius: 6px; background: #f3f4f6; cursor: pointer; }
+    button:hover { background: #e5e7eb; }
+    .err { min-height: 18px; margin: 6px 0; color: #b45309; word-break: break-all; }
+    .dbg { min-height: 16px; margin: 0 0 4px; color: #6b7280; font-size: 11px; word-break: break-all; }
+    .opts { margin-top: 10px; border-top: 1px solid #e5e7eb; padding-top: 6px; }
+  </style>
+</head>
+<body>
+  <h1>Agent Bridge</h1>
+  <div class="row"><span id="dot" class="dot"></span><span id="status">…</span></div>
+  <div id="err" class="err"></div>
+  <div id="dbg" class="dbg"></div>
+  <label>服务端 Token（server/config.local.json）</label>
+  <input id="token" type="password" placeholder="粘贴 64 位 token">
+  <button id="save">保存并测试连接</button>
+  <div class="opts">
+    <div class="row"><label><input id="autoSend" type="checkbox"> 自动发送执行结果</label></div>
+    <div class="row"><label><input id="paused" type="checkbox"> 暂停监听（不执行新指令）</label></div>
+    <button id="reset">新任务（重置计数与熔断）</button>
+  </div>
+  <script src="popup.js"></script>
+</body>
+</html>

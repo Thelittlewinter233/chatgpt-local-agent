@@ -1,0 +1,16 @@
+{
+  "manifest_version": 3,
+  "name": "ChatGPT Local Agent Bridge",
+  "version": "0.1.0",
+  "description": "把 chatgpt.com 回复中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
+  "permissions": ["storage"],
+  "background": { "service_worker": "background.js" },
+  "content_scripts": [
+    {
+      "matches": ["https://chatgpt.com/*"],
+      "js": ["selectors.js", "content.js"],
+      "run_at": "document_idle"
+    }
+  ],
+  "action": { "default_popup": "popup/popup.html", "default_title": "Agent Bridge" }
+}

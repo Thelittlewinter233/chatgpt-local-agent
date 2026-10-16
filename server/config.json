@@ -1,0 +1,24 @@
+{
+  "port": 9752,
+  "allowedRoots": ["d:\\Desktop\\agent_project"],
+  "defaultCwd": "d:\\Desktop\\agent_project",
+  "defaultShell": "powershell",
+  "shells": {
+    "powershell": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+    "powershell7": "pwsh",
+    "git-bash": "bash"
+  },
+  "policy": {
+    "defaultAllow": false,
+    "confirmUnknown": true,
+    "whitelist": [
+      "git", "node", "npm", "npx", "python", "pip", "dir", "ls", "get-childitem",
+      "type", "get-content", "echo", "write-output", "write-host", "cd", "set-location",
+      "pwd", "get-location", "rg", "select-string", "tree", "test-path", "get-item",
+      "copy-item", "new-item", "mkdir", "md", "get-process", "where", "where.exe", "timeout", "start-sleep"
+    ]
+  },
+  "runtime": "runtime",
+  "maxActiveSessions": 8,
+  "maxOutputBytes": 33554432
+}

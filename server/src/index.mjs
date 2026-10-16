@@ -1,0 +1,108 @@
+import fs from 'node:fs';
+import path from 'node:path';
+import { ROOT, loadConfig, atomicJson, readJson, secret, sleep } from './engine/common.mjs';
+import { Sessions } from './engine/sessions.mjs';
+import { createFsTools } from './fs-tools.mjs';
+import { classifyCommand } from './policy.mjs';
+import { startWsServer } from './ws-server.mjs';
+
+const base = readJson(path.join(ROOT, 'config.json'));
+const localPath = path.join(ROOT, 'config.local.json');
+const local = fs.existsSync(localPath) ? readJson(localPath) : {};
+const token = local.token || secret();
+atomicJson(localPath, { ...base, token });
+const config = loadConfig();
+
+const sessions = new Sessions(config);
+const fsTools = createFsTools(config);
+
+const log = (...parts) => console.log(new Date().toISOString(), ...parts);
+
+function computerInfo() {
+  return {
+    platform: process.platform,
+    node: process.version,
+    defaultShell: config.defaultShell,
+    shells: Object.keys(config.shells),
+    defaultCwd: config.defaultCwd,
+    allowedRoots: config.allowedRoots,
+    policyMode: config.policy?.defaultAllow ? 'blacklist-only' : 'whitelist',
+    whitelist: config.policy?.whitelist || [],
+    limits: { maxActiveSessions: config.maxActiveSessions, waitMsMax: 20000, commandMaxLength: 4000 },
+    notes: [
+      'File tools are restricted to allowedRoots; shell cwd must also be inside allowedRoots.',
+      'shell runs as the current Windows user; whitelist gates command heads, blacklist always wins.',
+      'Interactive PTY terminals are not available in this build; use shell wait/detach plus session_read.',
+      'End a task with action "done" so the bridge resets its step counters.'
+    ]
+  };
+}
+
+async function runShell(args, ctx) {
+  const verdict = classifyCommand(config, args.command, args.cwd);
+  if (verdict.kind === 'deny') {
+    const e = new Error(verdict.reason);
+    e.denied = true;
+    throw e;
+  }
+  if (verdict.kind === 'confirm') {
+    const preview = `shell [${verdict.head}] ${String(args.command).slice(0, 160)}`;
+    let approved = false;
+    try { if (ctx && ctx.requestConfirm) approved = await ctx.requestConfirm(preview); }
+    catch { approved = false; }
+    if (!approved) {
+      const e = new Error(`command "${verdict.head}" was rejected by the user or confirm timed out (60s)`);
+      e.denied = true;
+      throw e;
+    }
+  }
+  const state = await sessions.start({
+    kind: 'job',
+    command: args.command,
+    shell: args.shell,
+    cwd: args.cwd,
+    env: {},
+    label: args.label || '',
+    requestId: args.requestId
+  });
+  if (args.mode === 'detach') return { ...state, sessionId: state.id, detached: true };
+  const waitMs = Math.min(Math.max(Number(args.waitMs) || 5000, 0), 20000);
+  const end = Date.now() + waitMs;
+  let result;
+  do {
+    result = await sessions.request(state.id, 'read', { offset: 0, maxBytes: 65536, waitMs: 0 });
+    if (result.status !== 'running' || Date.now() >= end) break;
+    await sleep(50);
+  } while (true);
+  return { ...result, sessionId: state.id };
+}
+
+async function dispatch(action, args, ctx) {
+  switch (action) {
+    case 'computer_info': return computerInfo();
+    case 'fs_read': return fsTools.read(args);
+    case 'fs_write': return fsTools.write(args);
+    case 'fs_edit': return fsTools.edit(args);
+    case 'fs_list': return fsTools.list(args);
+    case 'fs_tree': return fsTools.tree(args);
+    case 'fs_search': return fsTools.search(args);
+    case 'fs_move': return fsTools.move(args);
+    case 'fs_mkdir': return fsTools.mkdir(args);
+    case 'fs_info': return fsTools.info(args);
+    case 'shell': return runShell(args, ctx);
+    case 'session_read': return sessions.request(args.sessionId, 'read', args);
+    case 'session_list': return { sessions: await sessions.list() };
+    case 'session_close': return sessions.request(args.sessionId, 'close');
+    case 'done': return { acknowledged: true };
+    default: throw new Error(`Unknown action: ${action}`);
+  }
+}
+
+startWsServer(config, dispatch, log);
+log('config:', JSON.stringify({
+  port: config.port,
+  allowedRoots: config.allowedRoots,
+  defaultShell: config.defaultShell,
+  policyMode: config.policy?.defaultAllow ? 'blacklist-only' : 'whitelist'
+}));
+log(`pairing token stored in ${path.join(ROOT, 'config.local.json')}`);
