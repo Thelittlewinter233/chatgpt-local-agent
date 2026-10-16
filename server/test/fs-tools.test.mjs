@@ -17,6 +17,22 @@ test('write and read roundtrip', async () => {
   assert.equal(r.sha256, w.sha256);
 });
 
+test('out-of-roots write is denied without ctx and allowed with bypassRoots', async () => {
+  const outside = path.join(path.dirname(root), 'agent-bypass-probe.txt');
+  await assert.rejects(() => tools.write({ path: outside, content: 'x' }), /Path outside allowedRoots/);
+  const w = await tools.write({ path: outside, content: 'x' }, { bypassRoots: true });
+  assert.equal(w.bytes, 1);
+  assert.ok(fs.existsSync(outside));
+  fs.unlinkSync(outside);
+});
+
+test('out-of-roots read is denied without ctx (dispatch never grants bypass for reads)', async () => {
+  const outside = path.join(path.dirname(root), 'agent-bypass-probe-2.txt');
+  fs.writeFileSync(outside, 'secret');
+  await assert.rejects(() => tools.read({ path: outside }), /Path outside allowedRoots/);
+  fs.unlinkSync(outside);
+});
+
 test('read tailBytes', async () => {
   const r = await tools.read({ path: path.join(root, 'a.txt'), tailBytes: 6 });
   assert.equal(r.content, 'world\n');

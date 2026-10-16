@@ -97,6 +97,7 @@ async function dispatch(action, args, ctx) {
   const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'shell', 'terminal_start', 'session_write', 'session_close'];
   const started = Date.now();
   let outcome = 'ok';
+  let bypassed = false;
   try {
     return await route(action, args, ctx);
   } catch (e) {
@@ -107,6 +108,7 @@ async function dispatch(action, args, ctx) {
       const approved = await ctx.requestConfirm(`放行 ${action} 到 allowedRoots 外路径：${target}${args.to ? ' → ' + clip(args.to, 200) : ''}`);
       if (approved) {
         try {
+          bypassed = true;
           return await route(action, args, { ...ctx, bypassRoots: true });
         } catch (e2) {
           outcome = e2 && e2.denied ? 'denied' : 'error';
@@ -125,6 +127,7 @@ async function dispatch(action, args, ctx) {
       audit({
         action,
         outcome,
+        bypass: bypassed || undefined,
         ms: Date.now() - started,
         target: clip(args.path || args.from || args.to || args.command || args.input || args.sessionId || '', 400),
         shell: args.shell
