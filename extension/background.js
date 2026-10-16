@@ -14,7 +14,7 @@ const BACKOFF = [1000, 2000, 5000, 10000, 30000];
 
 const getStore = keys => chrome.storage.local.get(keys);
 const BADGE = {
-  connected: { text: '', color: '#10b981' },
+  connected: { text: '✓', color: '#10b981' },
   connecting: { text: '…', color: '#eab308' },
   disconnected: { text: '!', color: '#ef4444' },
   unpaired: { text: '?', color: '#eab308' }

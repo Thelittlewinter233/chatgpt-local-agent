@@ -5,6 +5,12 @@
   "description": "把 chatgpt.com 回复中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
   "permissions": ["storage"],
   "background": { "service_worker": "background.js" },
+  "icons": {
+    "16": "icons/icon-16.png",
+    "32": "icons/icon-32.png",
+    "48": "icons/icon-48.png",
+    "128": "icons/icon-128.png"
+  },
   "content_scripts": [
     {
       "matches": [
@@ -29,5 +35,12 @@
       "run_at": "document_idle"
     }
   ],
-  "action": { "default_popup": "popup/popup.html", "default_title": "Agent Bridge" }
+  "action": {
+    "default_popup": "popup/popup.html",
+    "default_title": "Agent Bridge",
+    "default_icon": {
+      "16": "icons/icon-16.png",
+      "32": "icons/icon-32.png"
+    }
+  }
 }
