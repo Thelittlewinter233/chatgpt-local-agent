@@ -73,7 +73,7 @@ function findLatestAgentBlock() {
       if (!latest || (latest.el.compareDocumentPosition(code) & Node.DOCUMENT_POSITION_FOLLOWING)) latest = { el: code, body };
     }
   }
-  return latest ? latest.body : null;
+  return latest;
 }
 
 function scheduleCheck(delay = 350) {
@@ -124,19 +124,20 @@ async function checkCycle() {
     const raw1 = findLatestAgentBlock();
     if (!raw1) { dbg('no-agent-block-on-page'); return; }
     if (!(await isLeader())) { dbg('not-leader-tab'); return; }
-    const normalized = raw1.trim();
+    const normalized = raw1.body.trim();
     const hash8 = (await sha1(normalized)).slice(0, 8);
     const dedupKey = ADAPTER.id + ':' + hash8;
     if (seen.includes(dedupKey)) {
       const hit = lastResults[dedupKey];
-      const REPLAY_MAX = 3;
-      if (hit && Date.now() - hit.at < 10 * 60 * 1000 && (hit.count || 0) < REPLAY_MAX) {
+      if (hit && Date.now() - hit.at < 10 * 60 * 1000 && (hit.count || 0) < 1 && raw1.el !== hit.el) {
         hit.count = (hit.count || 0) + 1;
         hit.at = Date.now();
-        dbg('replay-cached-result', dedupKey + ' #' + hit.count);
+        hit.el = raw1.el;
+        dbg('replay-cached-result', dedupKey);
         await sleep(600);
         if (isGenerating()) return;
-        await respond(hash8, hit.payload);
+        processing = true;
+        try { await respond(hash8, hit.payload); } finally { processing = false; }
         return;
       }
       dbg('block-already-seen', dedupKey);
@@ -145,10 +146,10 @@ async function checkCycle() {
     await sleep(600);
     if (isGenerating()) return;
     const raw2 = findLatestAgentBlock();
-    if (!raw2 || raw2.trim() !== normalized) { dbg('stability-wait'); scheduleCheck(1000); return; }
+    if (!raw2 || raw2.body.trim() !== normalized) { dbg('stability-wait'); scheduleCheck(1000); return; }
     dbg('agent-block-detected', normalized.slice(0, 80));
     processing = true;
-    try { await handleBlock(normalized, dedupKey, hash8); }
+    try { await handleBlock(normalized, dedupKey, hash8, raw1.el); }
     finally { processing = false; }
   } catch (e) {
     dbg('check-error', String((e && e.stack) || e));
@@ -180,13 +181,14 @@ function buildResultBody(hash8, payload) {
   return body;
 }
 
-function cacheResult(key, payload) {
+function cacheResult(key, payload, el) {
   const hit = lastResults[key];
   if (hit && Date.now() - hit.at < 10 * 60 * 1000) {
     hit.count = (hit.count || 0) + 1;
     hit.at = Date.now();
+    if (el) hit.el = el;
   } else {
-    lastResults[key] = { payload, at: Date.now(), count: 0 };
+    lastResults[key] = { payload, at: Date.now(), count: 0, el: el || null };
   }
   const keys = Object.keys(lastResults);
   if (keys.length > 50) {
@@ -195,7 +197,7 @@ function cacheResult(key, payload) {
   }
 }
 
-async function handleBlock(raw, key, hash8) {
+async function handleBlock(raw, key, hash8, el) {
   let cmd;
   try { cmd = JSON.parse(raw); }
   catch {
@@ -205,13 +207,13 @@ async function handleBlock(raw, key, hash8) {
       dbg('incomplete-agent-block', t.slice(0, 40));
       return;
     }
-    cacheResult(key, { ok: false, error: 'invalid agent json' });
+    cacheResult(key, { ok: false, error: 'invalid agent json' }, el);
     await respond(hash8, { ok: false, error: 'invalid agent json' });
     return;
   }
   if (!cmd || typeof cmd.action !== 'string') {
     markSeen(key);
-    cacheResult(key, { ok: false, error: 'agent block missing action' });
+    cacheResult(key, { ok: false, error: 'agent block missing action' }, el);
     await respond(hash8, { ok: false, error: 'agent block missing action' });
     return;
   }
@@ -239,19 +241,19 @@ async function handleBlock(raw, key, hash8) {
   const limit = Math.min(Math.max(Number(opts.maxSteps) || 30, 10), 100);
   if (guard.step >= limit) {
     markSeen(key);
-    cacheResult(key, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` });
+    cacheResult(key, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` }, el);
     await respond(hash8, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` });
     return;
   }
   if (guard.failStreak >= 3) {
     markSeen(key);
-    cacheResult(key, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' });
+    cacheResult(key, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' }, el);
     await respond(hash8, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' });
     return;
   }
   if (guard.lastHash8 && guard.lastHash8 === key) {
     markSeen(key);
-    cacheResult(key, { ok: false, denied: 'same command repeated; possible loop' });
+    cacheResult(key, { ok: false, denied: 'same command repeated; possible loop' }, el);
     await respond(hash8, { ok: false, denied: 'same command repeated; possible loop' });
     return;
   }
@@ -264,14 +266,14 @@ async function handleBlock(raw, key, hash8) {
     payload = { ok: false, error: 'bridge unavailable: ' + ((e && e.message) || e) };
   }
   dbg('cmd-done', cmd.action + ' -> ' + JSON.stringify(payload).slice(0, 120));
-  await deliver(key, hash8, payload);
+  await deliver(key, hash8, payload, el);
 }
 
-async function deliver(key, hash8, payload) {
+async function deliver(key, hash8, payload, el) {
   guard.step += 1;
   guard.failStreak = payload && payload.ok ? 0 : guard.failStreak + 1;
   guard.lastHash8 = key;
-  cacheResult(key, payload);
+  cacheResult(key, payload, el);
   await saveState();
   await respond(hash8, payload);
 }
