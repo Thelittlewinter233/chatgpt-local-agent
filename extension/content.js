@@ -180,11 +180,41 @@ function buildResultBody(hash8, payload) {
   return body;
 }
 
+function cacheResult(key, payload) {
+  const hit = lastResults[key];
+  if (hit && Date.now() - hit.at < 10 * 60 * 1000) {
+    hit.count = (hit.count || 0) + 1;
+    hit.at = Date.now();
+  } else {
+    lastResults[key] = { payload, at: Date.now(), count: 0 };
+  }
+  const keys = Object.keys(lastResults);
+  if (keys.length > 50) {
+    keys.sort((a, b) => lastResults[a].at - lastResults[b].at);
+    for (const k of keys.slice(0, keys.length - 50)) delete lastResults[k];
+  }
+}
+
 async function handleBlock(raw, key, hash8) {
   let cmd;
   try { cmd = JSON.parse(raw); }
-  catch { await respond(hash8, { ok: false, error: 'invalid agent json' }); return; }
-  if (!cmd || typeof cmd.action !== 'string') { await respond(hash8, { ok: false, error: 'agent block missing action' }); return; }
+  catch {
+    markSeen(key);
+    const t = raw.trim();
+    if (t.startsWith('{') && !t.endsWith('}')) {
+      dbg('incomplete-agent-block', t.slice(0, 40));
+      return;
+    }
+    cacheResult(key, { ok: false, error: 'invalid agent json' });
+    await respond(hash8, { ok: false, error: 'invalid agent json' });
+    return;
+  }
+  if (!cmd || typeof cmd.action !== 'string') {
+    markSeen(key);
+    cacheResult(key, { ok: false, error: 'agent block missing action' });
+    await respond(hash8, { ok: false, error: 'agent block missing action' });
+    return;
+  }
   if (cmd.action === 'done') {
     guard = { step: 0, failStreak: 0, lastHash8: '' };
     markSeen(key);
@@ -207,9 +237,24 @@ async function handleBlock(raw, key, hash8) {
     await store.set({ pend });
   }
   const limit = Math.min(Math.max(Number(opts.maxSteps) || 30, 10), 100);
-  if (guard.step >= limit) { await respond(hash8, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` }); return; }
-  if (guard.failStreak >= 3) { await respond(hash8, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' }); return; }
-  if (guard.lastHash8 && guard.lastHash8 === key) { await respond(hash8, { ok: false, denied: 'same command repeated; possible loop' }); return; }
+  if (guard.step >= limit) {
+    markSeen(key);
+    cacheResult(key, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` });
+    await respond(hash8, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` });
+    return;
+  }
+  if (guard.failStreak >= 3) {
+    markSeen(key);
+    cacheResult(key, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' });
+    await respond(hash8, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' });
+    return;
+  }
+  if (guard.lastHash8 && guard.lastHash8 === key) {
+    markSeen(key);
+    cacheResult(key, { ok: false, denied: 'same command repeated; possible loop' });
+    await respond(hash8, { ok: false, denied: 'same command repeated; possible loop' });
+    return;
+  }
   markSeen(key);
   toast('AgentBridge: 执行 ' + cmd.action + ' …');
   let payload;
@@ -226,12 +271,7 @@ async function deliver(key, hash8, payload) {
   guard.step += 1;
   guard.failStreak = payload && payload.ok ? 0 : guard.failStreak + 1;
   guard.lastHash8 = key;
-  lastResults[key] = { payload, at: Date.now(), count: 0 };
-  const keys = Object.keys(lastResults);
-  if (keys.length > 50) {
-    keys.sort((a, b) => lastResults[a].at - lastResults[b].at);
-    for (const k of keys.slice(0, keys.length - 50)) delete lastResults[k];
-  }
+  cacheResult(key, payload);
   await saveState();
   await respond(hash8, payload);
 }

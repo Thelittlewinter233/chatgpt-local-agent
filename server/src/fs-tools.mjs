@@ -1,4 +1,4 @@
-import fs from 'node:fs';
+﻿import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { checkPathResolved as checkPath } from './policy.mjs';
@@ -20,8 +20,8 @@ function toRegex(pattern) {
 }
 
 export function createFsTools(config) {
-  async function read(args) {
-    const file = checkPath(config, args.path);
+  async function read(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
     const stat = fs.statSync(file);
     if (!stat.isFile()) throw new Error(`Not a file: ${file}`);
     let data, offset;
@@ -57,8 +57,8 @@ export function createFsTools(config) {
     return result;
   }
 
-  async function write(args) {
-    const file = checkPath(config, args.path);
+  async function write(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
     if (typeof args.content !== 'string') throw new Error('content must be a string');
     fs.mkdirSync(path.dirname(file), { recursive: true });
     const buffer = Buffer.from(args.content, 'utf8');
@@ -66,8 +66,8 @@ export function createFsTools(config) {
     return { path: file, bytes: buffer.length, sha256: hash(buffer) };
   }
 
-  async function edit(args) {
-    const file = checkPath(config, args.path);
+  async function edit(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
     if (typeof args.oldText !== 'string' || !args.oldText) throw new Error('oldText must be a non-empty string');
     if (typeof args.newText !== 'string') throw new Error('newText must be a string');
     const before = fs.readFileSync(file);
@@ -87,15 +87,15 @@ export function createFsTools(config) {
     return { path: target, replacements: count, sha256: hash(after) };
   }
 
-  async function list(args) {
-    const dir = checkPath(config, args.path);
+  async function list(args, ctx) {
+    const dir = checkPath(config, args.path, ctx && ctx.bypassRoots);
     const entries = fs.readdirSync(dir, { withFileTypes: true })
       .map(e => ({ name: e.name, type: e.isDirectory() ? 'dir' : e.isFile() ? 'file' : 'other' }));
     return { path: dir, entries };
   }
 
-  async function tree(args) {
-    const root = checkPath(config, args.path);
+  async function tree(args, ctx) {
+    const root = checkPath(config, args.path, ctx && ctx.bypassRoots);
     const maxDepth = Math.min(Math.max(Number(args.depth) || 2, 1), 4);
     const entries = [];
     const walk = (dir, depth) => {
@@ -111,8 +111,8 @@ export function createFsTools(config) {
     return { path: root, entries };
   }
 
-  async function search(args) {
-    const root = checkPath(config, args.path);
+  async function search(args, ctx) {
+    const root = checkPath(config, args.path, ctx && ctx.bypassRoots);
     if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
     const re = toRegex(args.pattern);
     const matches = [];
@@ -130,9 +130,9 @@ export function createFsTools(config) {
     return { path: root, pattern: args.pattern, matches };
   }
 
-  async function move(args) {
-    const from = checkPath(config, args.from);
-    const to = checkPath(config, args.to);
+  async function move(args, ctx) {
+    const from = checkPath(config, args.from, ctx && ctx.bypassRoots);
+    const to = checkPath(config, args.to, ctx && ctx.bypassRoots);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (fs.existsSync(to)) throw new Error(`Target already exists: ${to}`);
     const temp = `${to}.agent-move-${process.pid}.tmp`;
@@ -142,14 +142,14 @@ export function createFsTools(config) {
     return { from, to };
   }
 
-  async function mkdir(args) {
-    const dir = checkPath(config, args.path);
+  async function mkdir(args, ctx) {
+    const dir = checkPath(config, args.path, ctx && ctx.bypassRoots);
     fs.mkdirSync(dir, { recursive: true });
     return { path: dir };
   }
 
-  async function info(args) {
-    const file = checkPath(config, args.path);
+  async function info(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
     const stat = fs.statSync(file);
     return {
       path: file, size: stat.size, isFile: stat.isFile(), isDirectory: stat.isDirectory(),

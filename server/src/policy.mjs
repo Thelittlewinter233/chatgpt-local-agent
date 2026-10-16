@@ -9,13 +9,14 @@ const DENY_PATTERNS = [
   /\b(del|erase|rd|rmdir|rm)\b/i
 ];
 
-export function checkPath(config, p) {
+export function checkPath(config, p, bypassRoots) {
   if (typeof p !== 'string' || !p.trim()) {
     const e = new Error('path is required');
     e.denied = true;
     throw e;
   }
   const resolved = path.resolve(p);
+  if (bypassRoots) return resolved;
   const norm = resolved.toLowerCase();
   const sep = path.sep;
   const ok = (config.allowedRoots || []).some(r => {
@@ -23,15 +24,15 @@ export function checkPath(config, p) {
     return norm === rr || norm.startsWith(rr.endsWith(sep) ? rr : rr + sep);
   });
   if (!ok) {
-    const e = new Error(`Path outside allowedRoots: ${resolved}; ask the user to add this directory to allowedRoots in server/config.json and restart the server, then retry`);
+    const e = new Error(`Path outside allowedRoots: ${resolved}; ask the user to approve it in the confirm bar, or add this directory to allowedRoots in server/config.json and restart the server`);
     e.denied = true;
     throw e;
   }
   return resolved;
 }
 
-export function checkPathResolved(config, p) {
-  let resolved = checkPath(config, p);
+export function checkPathResolved(config, p, bypassRoots) {
+  let resolved = checkPath(config, p, bypassRoots);
   let current = resolved;
   const missing = [];
   for (;;) {
@@ -45,7 +46,7 @@ export function checkPathResolved(config, p) {
   }
   let real = current;
   while (missing.length) real = path.join(real, missing.pop());
-  if (real.toLowerCase() !== resolved.toLowerCase()) resolved = checkPath(config, real);
+  if (real.toLowerCase() !== resolved.toLowerCase()) resolved = checkPath(config, real, bypassRoots);
   return resolved;
 }
 

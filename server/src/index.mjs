@@ -91,6 +91,8 @@ async function runShell(args, ctx) {
   return { ...result, sessionId: state.id };
 }
 
+const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir']);
+
 async function dispatch(action, args, ctx) {
   const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'shell', 'terminal_start', 'session_write', 'session_close'];
   const started = Date.now();
@@ -98,6 +100,24 @@ async function dispatch(action, args, ctx) {
   try {
     return await route(action, args, ctx);
   } catch (e) {
+    const msg = String((e && e.message) || e);
+    if (e && e.denied && /Path outside allowedRoots/.test(msg)
+      && FS_MUTATING.has(action) && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
+      const target = clip(args.path || args.from || '', 200);
+      const approved = await ctx.requestConfirm(`放行 ${action} 到 allowedRoots 外路径：${target}${args.to ? ' → ' + clip(args.to, 200) : ''}`);
+      if (approved) {
+        try {
+          return await route(action, args, { ...ctx, bypassRoots: true });
+        } catch (e2) {
+          outcome = e2 && e2.denied ? 'denied' : 'error';
+          throw e2;
+        }
+      }
+      outcome = 'denied';
+      const denied = new Error(`user rejected out-of-roots ${action} to ${target}; add the directory to allowedRoots in server/config.json to allow it permanently`);
+      denied.denied = true;
+      throw denied;
+    }
     outcome = e && e.denied ? 'denied' : 'error';
     throw e;
   } finally {
@@ -116,15 +136,15 @@ async function dispatch(action, args, ctx) {
 async function route(action, args, ctx) {
   switch (action) {
     case 'computer_info': return computerInfo();
-    case 'fs_read': return fsTools.read(args);
-    case 'fs_write': return fsTools.write(args);
-    case 'fs_edit': return fsTools.edit(args);
-    case 'fs_list': return fsTools.list(args);
-    case 'fs_tree': return fsTools.tree(args);
-    case 'fs_search': return fsTools.search(args);
-    case 'fs_move': return fsTools.move(args);
-    case 'fs_mkdir': return fsTools.mkdir(args);
-    case 'fs_info': return fsTools.info(args);
+    case 'fs_read': return fsTools.read(args, ctx);
+    case 'fs_write': return fsTools.write(args, ctx);
+    case 'fs_edit': return fsTools.edit(args, ctx);
+    case 'fs_list': return fsTools.list(args, ctx);
+    case 'fs_tree': return fsTools.tree(args, ctx);
+    case 'fs_search': return fsTools.search(args, ctx);
+    case 'fs_move': return fsTools.move(args, ctx);
+    case 'fs_mkdir': return fsTools.mkdir(args, ctx);
+    case 'fs_info': return fsTools.info(args, ctx);
     case 'shell': return runShell(args, ctx);
     case 'session_read': return sessions.request(args.sessionId, 'read', args);
     case 'session_list': return { sessions: await sessions.list() };

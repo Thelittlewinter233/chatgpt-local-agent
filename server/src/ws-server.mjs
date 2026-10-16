@@ -17,6 +17,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
   const cache = new Map();
   const pendingConfirms = new Map();
   let confirmCounter = 0;
+  let activeWs = null;
   const REPLAY_MAX_AGE = 10 * 60 * 1000;
 
   const send = (ws, frame) => { if (ws.readyState === 1) ws.send(JSON.stringify(frame)); };
@@ -30,7 +31,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
     pendingConfirms.clear();
   };
 
-  const makeCtx = ws => ({
+  const makeCtx = () => ({
     requestConfirm: preview => new Promise(resolve => {
       const confirmId = ++confirmCounter;
       const entry = {
@@ -38,7 +39,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
         timer: setTimeout(() => { if (pendingConfirms.delete(confirmId)) { log(`confirm #${confirmId} -> timeout`); resolve(false); } }, 60000)
       };
       pendingConfirms.set(confirmId, entry);
-      send(ws, { type: 'confirm-required', confirmId, preview });
+      send(activeWs, { type: 'confirm-required', confirmId, preview });
     })
   });
 
@@ -56,7 +57,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
     const entry = blocked.get(ip);
     if (entry && entry.until > Date.now()) { socket.destroy(); return; }
     const origin = req.headers.origin || '';
-    if (!origin.startsWith('chrome-extension://')) { log(`rejected origin: ${origin || '(none)'}`); socket.destroy(); return; }
+    if (!origin.startsWith('chrome-extension://') && !origin.startsWith('moz-extension://')) { log(`rejected origin: ${origin || '(none)'}`); socket.destroy(); return; }
     wss.handleUpgrade(req, socket, head, ws => wss.emit('connection', ws, req, ip));
   });
 
@@ -75,6 +76,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
         authed = true;
         clearTimeout(helloTimer);
         blocked.delete(ip);
+        activeWs = ws;
         log('extension authenticated');
         send(ws, { type: 'hello_ok' });
         return;
@@ -110,7 +112,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
         const started = Date.now();
         let payload;
         try {
-          const data = await dispatch(m.action, m.args || {}, makeCtx(ws));
+          const data = await dispatch(m.action, m.args || {}, makeCtx());
           payload = { ok: true, data };
         } catch (error) {
           payload = error && error.denied
@@ -125,7 +127,14 @@ export function startWsServer(config, dispatch, log, onRotate) {
       }).catch(() => { });
     });
 
-    ws.on('close', () => { clearTimeout(helloTimer); failConfirmWaiters(); log('extension disconnected'); });
+    ws.on('close', () => {
+      clearTimeout(helloTimer);
+      if (activeWs === ws) {
+        activeWs = null;
+        failConfirmWaiters();
+      }
+      log('extension disconnected');
+    });
     ws.on('error', () => { });
   });
 
