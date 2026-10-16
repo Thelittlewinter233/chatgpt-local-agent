@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ROOT, loadConfig, atomicJson, readJson, secret, sleep } from './engine/common.mjs';
 import { Sessions } from './engine/sessions.mjs';
 import { createFsTools } from './fs-tools.mjs';
-import { classifyCommand, checkTerminalInput } from './policy.mjs';
+import { classifyCommand, checkTerminalInput, checkPath } from './policy.mjs';
 import { startWsServer } from './ws-server.mjs';
 
 const base = readJson(path.join(ROOT, 'config.json'));
@@ -89,7 +89,7 @@ async function runShell(args, ctx) {
   return { ...result, sessionId: state.id };
 }
 
-const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir']);
+const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'fs_delete']);
 
 async function dispatch(action, args, ctx) {
   const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'fs_delete', 'shell', 'terminal_start', 'session_write', 'session_close'];
@@ -147,13 +147,21 @@ async function route(action, args, ctx) {
     case 'fs_mkdir': return fsTools.mkdir(args, ctx);
     case 'fs_info': return fsTools.info(args, ctx);
     case 'fs_delete': {
-      const approved = await ctx.requestConfirm(`删除文件：${args.path}`);
+      const p = String(args.path || '');
+      let outOfRoots = false;
+      try { checkPath(config, p); }
+      catch (e) {
+        if (e && e.denied && /Path outside allowedRoots/.test(String(e.message || ''))) outOfRoots = true;
+        else throw e;
+      }
+      const preview = outOfRoots ? `删除文件（路径在 allowedRoots 之外，将临时放行）：${p}` : `删除文件：${p}`;
+      const approved = await ctx.requestConfirm(preview);
       if (!approved) {
-        const denied = new Error(`user rejected deletion of ${args.path}`);
+        const denied = new Error(`user rejected deletion of ${p}`);
         denied.denied = true;
         throw denied;
       }
-      return fsTools.del(args, ctx);
+      return fsTools.del(args, outOfRoots ? { ...ctx, bypassRoots: true } : ctx);
     }
     case 'shell': return runShell(args, ctx);
     case 'session_read': return sessions.request(args.sessionId, 'read', args);
