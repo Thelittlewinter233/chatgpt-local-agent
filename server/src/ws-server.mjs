@@ -36,7 +36,7 @@ export function startWsServer(config, dispatch, log, onRotate) {
       const confirmId = ++confirmCounter;
       const entry = {
         resolve: approved => { log(`confirm #${confirmId} -> ${approved ? 'approved' : 'rejected'}`); resolve(approved); },
-        timer: setTimeout(() => { if (pendingConfirms.delete(confirmId)) { log(`confirm #${confirmId} -> timeout`); resolve(false); } }, 60000)
+        timer: null
       };
       pendingConfirms.set(confirmId, entry);
       send(activeWs, { type: 'confirm-required', confirmId, preview });

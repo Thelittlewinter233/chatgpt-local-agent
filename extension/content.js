@@ -333,14 +333,8 @@ function showConfirmBar(confirmId, preview) {
   no.style.cssText = 'padding:5px 14px;border:0;border-radius:6px;background:#374151;color:#f9fafb;cursor:pointer';
   const timer = document.createElement('span');
   timer.style.cssText = 'margin-left:auto;color:#9ca3af;font-size:12px';
-  let left = 60;
-  timer.textContent = left + 's 后自动拒绝';
-  const tick = setInterval(() => {
-    left -= 1;
-    if (left > 0) timer.textContent = left + 's 后自动拒绝';
-  }, 1000);
+  timer.textContent = '等待你的选择（不自动拒绝）';
   const resolve = approved => {
-    clearInterval(tick);
     removeConfirmBar();
     try { chrome.runtime.sendMessage({ type: 'confirm-resolve', confirmId, approved }).catch(() => { }); } catch { }
   };
