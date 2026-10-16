@@ -10,13 +10,14 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function startWsServer(config, dispatch, log) {
+export function startWsServer(config, dispatch, log, onRotate) {
   const server = http.createServer((req, res) => { res.writeHead(404); res.end(); });
   const wss = new WebSocketServer({ noServer: true });
   const blocked = new Map();
   const cache = new Map();
   const pendingConfirms = new Map();
   let confirmCounter = 0;
+  const REPLAY_MAX_AGE = 10 * 60 * 1000;
 
   const send = (ws, frame) => { if (ws.readyState === 1) ws.send(JSON.stringify(frame)); };
   const trimCache = () => { while (cache.size > MAX_CACHE) cache.delete(cache.keys().next().value); };
@@ -73,11 +74,19 @@ export function startWsServer(config, dispatch, log) {
         if (!safeEqual(m.token, config.token)) return fail(ws, ip, 'bad token');
         authed = true;
         clearTimeout(helloTimer);
+        blocked.delete(ip);
         log('extension authenticated');
         send(ws, { type: 'hello_ok' });
         return;
       }
       if (m.type === 'ping') return send(ws, { type: 'pong' });
+      if (m.type === 'rotate-token') {
+        if (typeof onRotate !== 'function') return send(ws, { type: 'rotate-failed', error: 'rotation not configured' });
+        const token = onRotate();
+        send(ws, { type: 'token-rotated', token });
+        log('token rotated via authenticated request');
+        return;
+      }
       if (m.type === 'ack') { cache.delete(m.msgId); return; }
       if (m.type === 'confirm-resolve') {
         const id = Number(m.confirmId);
@@ -91,7 +100,8 @@ export function startWsServer(config, dispatch, log) {
       }
       if (m.type === 'resume') {
         const last = Number(m.lastAckId) || 0;
-        for (const [id, frame] of cache) if (id > last) send(ws, frame);
+        const cutoff = Date.now() - REPLAY_MAX_AGE;
+        for (const [id, frame] of cache) if (id > last && frame.ts > cutoff) send(ws, frame);
         return;
       }
       if (m.type !== 'cmd') return;
@@ -107,7 +117,7 @@ export function startWsServer(config, dispatch, log) {
             ? { ok: false, denied: String(error.message) }
             : { ok: false, error: String((error && error.message) || error) };
         }
-        const frame = { type: 'result', msgId: m.msgId, hash8: m.hash8, payload };
+        const frame = { type: 'result', msgId: m.msgId, hash8: m.hash8, ts: Date.now(), payload };
         cache.set(m.msgId, frame);
         trimCache();
         send(ws, frame);

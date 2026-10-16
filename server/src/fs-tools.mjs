@@ -1,7 +1,7 @@
 import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
-import { checkPath } from './policy.mjs';
+import { checkPathResolved as checkPath } from './policy.mjs';
 import { replaceFile } from './engine/common.mjs';
 
 const hash = data => createHash('sha256').update(data).digest('hex');
@@ -104,7 +104,7 @@ export function createFsTools(config) {
         if (entries.length >= MAX_TREE_ENTRIES) return;
         const full = path.join(dir, e.name);
         entries.push({ path: full, type: e.isDirectory() ? 'dir' : 'file' });
-        if (e.isDirectory() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full, depth + 1);
+        if (e.isDirectory() && !e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full, depth + 1);
       }
     };
     walk(root, 1);
@@ -122,7 +122,7 @@ export function createFsTools(config) {
         if (matches.length >= MAX_SEARCH_RESULTS) return;
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
-          if (!e.name.startsWith('.') && e.name !== 'node_modules') walk(full);
+          if (!e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full);
         } else if (re.test(e.name)) matches.push(full);
       }
     };

@@ -177,12 +177,17 @@ async function handleBlock(raw, key, hash8) {
   }
   const o = await store.get('pend');
   const pend = o.pend || {};
+  const PEND_MAX_AGE = 10 * 60 * 1000;
   if (pend[key]) {
-    const payload = pend[key].payload;
+    if (Date.now() - (pend[key].at || 0) < PEND_MAX_AGE) {
+      const payload = pend[key].payload;
+      delete pend[key];
+      await store.set({ pend });
+      await deliver(key, hash8, payload);
+      return;
+    }
     delete pend[key];
     await store.set({ pend });
-    await deliver(key, hash8, payload);
-    return;
   }
   const limit = Math.min(Math.max(Number(opts.maxSteps) || 30, 10), 100);
   if (guard.step >= limit) { await respond(hash8, { ok: false, denied: `single-task step limit (${limit}) reached; press New Task in the popup to continue` }); return; }
@@ -280,16 +285,67 @@ function showConfirmBar(confirmId, preview) {
   document.body.appendChild(bar);
 }
 
+const PROTOCOL_MARKER = '## 你是谁';
+
+let protocolText = null;
+
+async function injectProtocol() {
+  const el = ADAPTER.findInput();
+  const existing = String((el && el.textContent) || '') + String((el && el.value) || '');
+  if (existing.includes(PROTOCOL_MARKER)) {
+    toast('AgentBridge: 输入框已含协议，无需重复注入');
+    return;
+  }
+  if (!protocolText) {
+    const r = await chrome.runtime.sendMessage({ type: 'get-prompt' }).catch(e => ({ ok: false, error: String(e) }));
+    if (!r || !r.ok) { toast('AgentBridge: 协议获取失败 ' + ((r && r.error) || '')); return; }
+    protocolText = r.text;
+  }
+  const filled = await ADAPTER.insertText(protocolText);
+  if (filled) {
+    highlight(true);
+    toast('AgentBridge: 协议已注入，可补充任务后发送（Alt+P 随时再注入）');
+  } else {
+    toast('AgentBridge: 注入失败（找不到输入框）');
+  }
+}
+
 async function init() {
   await loadState();
   if (!ADAPTER) {
     dbg('no-adapter-for-this-site', location.host);
     return;
   }
+  document.addEventListener('keydown', e => {
+    if (e.altKey && (e.code === 'KeyP' || e.key === 'p' || e.key === 'P')) {
+      e.preventDefault();
+      injectProtocol();
+    }
+  }, true);
   try { chrome.runtime.sendMessage({ type: 'content-hello' }).catch(() => { }); } catch { }
   new MutationObserver(() => scheduleCheck()).observe(document.body, { subtree: true, childList: true, characterData: true });
   setInterval(() => scheduleCheck(), 2500);
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
+    if (msg.type === 'inject-prompt') {
+      injectProtocol();
+      sendResponse({ ok: true });
+      return;
+    }
+    if (msg.type === 'health-check') {
+      sendResponse({
+        ok: true,
+        adapter: ADAPTER.id,
+        host: location.host,
+        inputFound: !!ADAPTER.findInput(),
+        generating: isGenerating(),
+        codeBlocks: document.querySelectorAll('pre code').length,
+        agentBlocks: !!findLatestAgentBlock(),
+        seen: seen.length,
+        step: guard.step,
+        failStreak: guard.failStreak
+      });
+      return;
+    }
     if (msg.type === 'confirm-request') {
       showConfirmBar(msg.confirmId, msg.preview);
       sendResponse({ ok: true });

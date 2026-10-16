@@ -1,0 +1,60 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    body { margin: 0; padding: 24px; font: 14px/22px system-ui, "Segoe UI", "Microsoft YaHei", sans-serif; color: #111827; background: #f9fafb; }
+    h1 { font-size: 18px; margin: 0 0 6px; }
+    .sub { color: #6b7280; font-size: 12px; margin-bottom: 16px; }
+    button { padding: 7px 14px; border: 1px solid #d1d5db; border-radius: 6px; background: #f3f4f6; cursor: pointer; margin: 4px 8px 12px 0; }
+    button:hover { background: #e5e7eb; }
+    pre { background: #111827; color: #e5e7eb; padding: 12px; border-radius: 8px; font: 12px/18px Consolas, monospace; white-space: pre-wrap; word-break: break-all; min-height: 40px; }
+    h2 { font-size: 14px; margin: 20px 0 6px; }
+    table { border-collapse: collapse; width: 100%; font-size: 13px; }
+    td, th { border: 1px solid #e5e7eb; padding: 6px 10px; text-align: left; }
+    th { background: #f3f4f6; }
+    code { background: #eef2f7; padding: 1px 5px; border-radius: 4px; font-family: Consolas, monospace; font-size: 12px; }
+  </style>
+</head>
+<body>
+  <h1>AgentBridge 选择器健康自检</h1>
+  <div class="sub">检测当前任务标签页的适配器命中情况。先在某个 AI 网页标签页里完成扩展刷新（F5），再回到本页点击检测。</div>
+  <button id="check">检测任务标签页</button>
+  <span id="state"></span>
+  <pre id="out">尚未检测。</pre>
+
+  <h2>各站点适配器与域名</h2>
+  <table>
+    <tr><th>适配器 id</th><th>域名</th><th>状态</th></tr>
+    <tr><td>chatgpt</td><td><code>chatgpt.com</code></td><td>已实测</td></tr>
+    <tr><td>chatglm</td><td><code>chatglm.cn</code></td><td>已实测</td></tr>
+    <tr><td>deepseek</td><td><code>chat.deepseek.com</code></td><td>启发式首版</td></tr>
+    <tr><td>kimi</td><td><code>kimi.com</code> / <code>kimi.moonshot.cn</code></td><td>启发式首版</td></tr>
+    <tr><td>doubao</td><td><code>doubao.com</code></td><td>启发式首版</td></tr>
+    <tr><td>generic</td><td>任意（兜底，需在 manifest matches 中手动加域名）</td><td>兜底</td></tr>
+  </table>
+
+  <h2>通用 F12 探测命令</h2>
+  <div class="sub">在目标站点页面控制台执行，把输出发给维护者即可精修适配器。</div>
+  <table>
+    <tr><th>目的</th><th>命令</th></tr>
+    <tr><td>输入框探测</td><td><code>document.querySelectorAll('textarea, [contenteditable="true"]').length</code></td></tr>
+    <tr><td>代码块探测</td><td><code>document.querySelectorAll('pre code').length</code> 与 <code>document.querySelector('pre code')?.className</code></td></tr>
+    <tr><td>发送按钮探测</td><td><code>[...document.querySelectorAll('button')].map(b =&gt; b.getAttribute('aria-label') || b.title).filter(Boolean)</code></td></tr>
+    <tr><td>停止按钮探测</td><td>生成回复期间执行上一条，观察新出现的按钮 label</td></tr>
+  </table>
+
+  <h2>心跳 stage 对照</h2>
+  <table>
+    <tr><th>popup 心跳</th><th>含义 / 处理</th></tr>
+    <tr><td>no-adapter-for-this-site</td><td>域名未注册：检查 manifest matches 与 registry</td></tr>
+    <tr><td>no-agent-block-on-page</td><td>代码块未识别：调 codeBodyIfAgent 的 class/头部判定</td></tr>
+    <tr><td>fill-failed</td><td>输入框未找到或写入失败：调 findInput/insertText</td></tr>
+    <tr><td>send-failed</td><td>按钮与回车均未生效：调 sendSelectors</td></tr>
+    <tr><td>not-leader-tab</td><td>该标签非任务标签：点击左下角胶囊接管</td></tr>
+    <tr><td>block-already-seen</td><td>块已处理过：点 popup"新任务"清空去重记忆</td></tr>
+  </table>
+
+  <script src="health.js"></script>
+</body>
+</html>

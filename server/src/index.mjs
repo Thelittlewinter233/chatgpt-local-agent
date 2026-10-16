@@ -18,6 +18,20 @@ const fsTools = createFsTools(config);
 
 const log = (...parts) => console.log(new Date().toISOString(), ...parts);
 
+function audit(event) {
+  try {
+    const dir = path.join(config.runtime, 'audit');
+    fs.mkdirSync(dir, { recursive: true });
+    const file = path.join(dir, `audit-${new Date().toISOString().slice(0, 10)}.jsonl`);
+    fs.appendFileSync(file, JSON.stringify({ ts: new Date().toISOString(), ...event }) + '\n');
+  } catch (e) { log('audit write failed:', String(e && e.message || e)); }
+}
+
+function clip(v, n = 400) {
+  const s = String(v ?? '');
+  return s.length > n ? s.slice(0, n) + '…' : s;
+}
+
 function computerInfo() {
   return {
     platform: process.platform,
@@ -78,6 +92,28 @@ async function runShell(args, ctx) {
 }
 
 async function dispatch(action, args, ctx) {
+  const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'shell', 'terminal_start', 'session_write', 'session_close'];
+  const started = Date.now();
+  let outcome = 'ok';
+  try {
+    return await route(action, args, ctx);
+  } catch (e) {
+    outcome = e && e.denied ? 'denied' : 'error';
+    throw e;
+  } finally {
+    if (mutating.includes(action)) {
+      audit({
+        action,
+        outcome,
+        ms: Date.now() - started,
+        target: clip(args.path || args.from || args.to || args.command || args.input || args.sessionId || '', 400),
+        shell: args.shell
+      });
+    }
+  }
+}
+
+async function route(action, args, ctx) {
   switch (action) {
     case 'computer_info': return computerInfo();
     case 'fs_read': return fsTools.read(args);
@@ -116,7 +152,16 @@ async function dispatch(action, args, ctx) {
   }
 }
 
-startWsServer(config, dispatch, log);
+function rotateToken() {
+  const t = secret();
+  config.token = t;
+  const cur = readJson(localPath);
+  cur.token = t;
+  atomicJson(localPath, cur);
+  return t;
+}
+
+startWsServer(config, dispatch, log, rotateToken);
 log('config:', JSON.stringify({
   port: config.port,
   allowedRoots: config.allowedRoots,

@@ -30,6 +30,25 @@ export function checkPath(config, p) {
   return resolved;
 }
 
+export function checkPathResolved(config, p) {
+  let resolved = checkPath(config, p);
+  let current = resolved;
+  const missing = [];
+  for (;;) {
+    try { current = fs.realpathSync(current); break; }
+    catch {
+      const parent = path.dirname(current);
+      if (parent === current) break;
+      missing.push(path.basename(current));
+      current = parent;
+    }
+  }
+  let real = current;
+  while (missing.length) real = path.join(real, missing.pop());
+  if (real.toLowerCase() !== resolved.toLowerCase()) resolved = checkPath(config, real);
+  return resolved;
+}
+
 export function checkTerminalInput(config, input) {
   if (typeof input !== 'string' || !input) {
     const e = new Error('input is required');

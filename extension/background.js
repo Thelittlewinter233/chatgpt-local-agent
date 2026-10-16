@@ -8,11 +8,26 @@ let msgCounter = 0;
 let lastAckId = 0;
 let contentTabId = null;
 let leaderTabId = null;
+let rotateWaiter = null;
 const pending = new Map();
 const BACKOFF = [1000, 2000, 5000, 10000, 30000];
 
 const getStore = keys => chrome.storage.local.get(keys);
-const setStatus = (status, error) => chrome.storage.local.set({ wsStatus: status, wsError: error || '' });
+const BADGE = {
+  connected: { text: '', color: '#10b981' },
+  connecting: { text: '…', color: '#eab308' },
+  disconnected: { text: '!', color: '#ef4444' },
+  unpaired: { text: '?', color: '#eab308' }
+};
+
+const setStatus = (status, error) => {
+  chrome.storage.local.set({ wsStatus: status, wsError: error || '' });
+  const m = BADGE[status] || { text: '', color: '#6b7280' };
+  try {
+    chrome.action.setBadgeText({ text: m.text });
+    chrome.action.setBadgeBackgroundColor({ color: m.color });
+  } catch { }
+};
 
 function send(frame) {
   if (ws && ws.readyState === 1) ws.send(JSON.stringify(frame));
@@ -73,6 +88,15 @@ async function targetTabId() {
   return o2.contentTabId != null ? o2.contentTabId : null;
 }
 
+let protocolCache = null;
+
+async function getProtocolText() {
+  if (protocolCache) return protocolCache;
+  const r = await fetch(chrome.runtime.getURL('assets/chat-prompt.txt'));
+  protocolCache = await r.text();
+  return protocolCache;
+}
+
 async function handleFrame(m) {
   if (m.type === 'hello_ok') {
     authed = true;
@@ -86,6 +110,22 @@ async function handleFrame(m) {
     return;
   }
   if (m.type === 'pong') return;
+  if (m.type === 'token-rotated') {
+    if (rotateWaiter) {
+      const r = rotateWaiter;
+      rotateWaiter = null;
+      r(m.token);
+    }
+    return;
+  }
+  if (m.type === 'rotate-failed') {
+    if (rotateWaiter) {
+      const r = rotateWaiter;
+      rotateWaiter = null;
+      r(null);
+    }
+    return;
+  }
   if (m.type === 'confirm-required') {
     (async () => {
       const tabId = await targetTabId();
@@ -180,6 +220,49 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
         sendResponse({ ok: true });
       } else {
         sendResponse({ ok: false, error: '未找到 chatgpt.com 标签页，请先打开并刷新' });
+      }
+    })();
+    return true;
+  }
+  if (msg.type === 'get-prompt') {
+    getProtocolText().then(t => sendResponse({ ok: true, text: t })).catch(e => sendResponse({ ok: false, error: String(e && e.message || e) }));
+    return true;
+  }
+  if (msg.type === 'rotate-token') {
+    (async () => {
+      if (!authed) { sendResponse({ ok: false, error: 'not connected' }); return; }
+      const token = await new Promise(resolve => {
+        rotateWaiter = resolve;
+        send({ type: 'rotate-token' });
+        setTimeout(() => { if (rotateWaiter === resolve) { rotateWaiter = null; resolve(null); } }, 8000);
+      });
+      if (!token) { sendResponse({ ok: false, error: 'rotate timeout or refused' }); return; }
+      await chrome.storage.local.set({ token });
+      sendResponse({ ok: true, token });
+    })();
+    return true;
+  }
+  if (msg.type === 'inject-prompt') {
+    (async () => {
+      const tabId = await targetTabId();
+      if (tabId != null) {
+        chrome.tabs.sendMessage(tabId, { type: 'inject-prompt' }).catch(() => { });
+        sendResponse({ ok: true });
+      } else {
+        sendResponse({ ok: false, error: '未找到 chatgpt.com 标签页，请先打开并刷新' });
+      }
+    })();
+    return true;
+  }
+  if (msg.type === 'health-check-proxy') {
+    (async () => {
+      const tabId = await targetTabId();
+      if (tabId == null) { sendResponse({ ok: false, error: '未找到任务标签页' }); return; }
+      try {
+        const r = await chrome.tabs.sendMessage(tabId, { type: 'health-check' });
+        sendResponse({ ok: true, tabId, data: r });
+      } catch (e) {
+        sendResponse({ ok: false, error: '任务标签页未注入 content script（请刷新页面）: ' + (e && e.message || e) });
       }
     })();
     return true;

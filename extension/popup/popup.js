@@ -63,6 +63,31 @@ $('reset').addEventListener('click', async () => {
   $('err').textContent = '已重置计数、熔断与去重记忆';
 });
 
+$('injectPrompt').addEventListener('click', async () => {
+  $('err').textContent = '正在注入协议…';
+  const res = await chrome.runtime.sendMessage({ type: 'inject-prompt' }).catch(e => ({ ok: false, error: String(e) }));
+  $('err').textContent = res && res.ok
+    ? '已注入：去任务标签页输入框查看，补充任务后发送'
+    : '失败：' + ((res && res.error) || '未知');
+});
+
+$('rotateToken').addEventListener('click', async () => {
+  if (!confirm('确定轮换 Token？服务端旧 token 将立即失效，需要重新配对其他设备。')) return;
+  $('err').textContent = '正在轮换…';
+  const res = await chrome.runtime.sendMessage({ type: 'rotate-token' }).catch(e => ({ ok: false, error: String(e) }));
+  if (res && res.ok) {
+    await chrome.storage.local.set({ token: res.token });
+    $('err').textContent = '已轮换，新 token 已写入 config.local.json 并更新到本扩展';
+    refresh();
+  } else {
+    $('err').textContent = '轮换失败：' + ((res && res.error) || '未知');
+  }
+});
+
+$('openHealth').addEventListener('click', () => {
+  window.open(chrome.runtime.getURL('health.html'));
+});
+
 $('testConfirm').addEventListener('click', async () => {
   $('err').textContent = '已发送测试请求…';
   const res = await chrome.runtime.sendMessage({ type: 'test-confirm' }).catch(e => ({ ok: false, error: String(e) }));
