@@ -23,7 +23,7 @@ export function checkPath(config, p) {
     return norm === rr || norm.startsWith(rr.endsWith(sep) ? rr : rr + sep);
   });
   if (!ok) {
-    const e = new Error(`Path outside allowedRoots: ${resolved}`);
+    const e = new Error(`Path outside allowedRoots: ${resolved}; ask the user to add this directory to allowedRoots in server/config.json and restart the server, then retry`);
     e.denied = true;
     throw e;
   }

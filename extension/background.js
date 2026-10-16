@@ -88,6 +88,22 @@ async function targetTabId() {
   return o2.contentTabId != null ? o2.contentTabId : null;
 }
 
+async function activeTabId() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs.length && tabs[0].id != null) return tabs[0].id;
+  } catch { }
+  return null;
+}
+
+async function broadcastTabs() {
+  try {
+    const tabs = await chrome.tabs.query({});
+    return tabs.map(t => t.id).filter(id => id != null);
+  } catch { }
+  return [];
+}
+
 let protocolCache = null;
 
 async function getProtocolText() {
@@ -128,13 +144,15 @@ async function handleFrame(m) {
   }
   if (m.type === 'confirm-required') {
     (async () => {
-      const tabId = await targetTabId();
-      if (tabId != null) {
-        chrome.tabs.sendMessage(tabId, { type: 'confirm-request', confirmId: m.confirmId, preview: m.preview })
-          .catch(e => console.log('[AgentBridge] confirm relay failed:', e && e.message));
-      } else {
-        console.log('[AgentBridge] confirm required but no chatgpt tab registered');
+      const ids = await broadcastTabs();
+      let delivered = false;
+      for (const id of ids) {
+        try {
+          await chrome.tabs.sendMessage(id, { type: 'confirm-request', confirmId: m.confirmId, preview: m.preview });
+          delivered = true;
+        } catch { }
       }
+      if (!delivered) console.log('[AgentBridge] confirm required but no content-script tab reachable');
     })();
     return;
   }
@@ -244,13 +262,19 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
   }
   if (msg.type === 'inject-prompt') {
     (async () => {
-      const tabId = await targetTabId();
-      if (tabId != null) {
-        chrome.tabs.sendMessage(tabId, { type: 'inject-prompt' }).catch(() => { });
-        sendResponse({ ok: true });
-      } else {
-        sendResponse({ ok: false, error: '未找到 chatgpt.com 标签页，请先打开并刷新' });
+      const candidates = [];
+      const active = await activeTabId();
+      if (active != null) candidates.push(active);
+      const fallback = await targetTabId();
+      if (fallback != null && !candidates.includes(fallback)) candidates.push(fallback);
+      for (const tabId of candidates) {
+        try {
+          const r = await chrome.tabs.sendMessage(tabId, { type: 'inject-prompt' });
+          sendResponse(r && r.ok ? r : { ok: false, error: (r && r.error) || 'content script rejected injection' });
+          return;
+        } catch { }
       }
+      sendResponse({ ok: false, error: '当前激活页面没有 AgentBridge 脚本（请确认已打开支持的 AI 站点并刷新页面）' });
     })();
     return true;
   }

@@ -7,6 +7,7 @@ const store = {
 let opts = { paused: false, autoSend: true, maxSteps: 30 };
 let guard = { step: 0, failStreak: 0, lastHash8: '' };
 let seen = [];
+let lastResults = {};
 let processing = false;
 let checkTimer = null;
 let lastDbgKey = '';
@@ -124,7 +125,21 @@ async function checkCycle() {
     const normalized = raw1.trim();
     const hash8 = (await sha1(normalized)).slice(0, 8);
     const dedupKey = ADAPTER.id + ':' + hash8;
-    if (seen.includes(dedupKey)) { dbg('block-already-seen', dedupKey); return; }
+    if (seen.includes(dedupKey)) {
+      const hit = lastResults[dedupKey];
+      const REPLAY_MAX = 3;
+      if (hit && Date.now() - hit.at < 10 * 60 * 1000 && (hit.count || 0) < REPLAY_MAX) {
+        hit.count = (hit.count || 0) + 1;
+        hit.at = Date.now();
+        dbg('replay-cached-result', dedupKey + ' #' + hit.count);
+        await sleep(600);
+        if (isGenerating()) return;
+        await respond(hash8, hit.payload);
+        return;
+      }
+      dbg('block-already-seen', dedupKey);
+      return;
+    }
     await sleep(600);
     if (isGenerating()) return;
     const raw2 = findLatestAgentBlock();
@@ -209,6 +224,12 @@ async function deliver(key, hash8, payload) {
   guard.step += 1;
   guard.failStreak = payload && payload.ok ? 0 : guard.failStreak + 1;
   guard.lastHash8 = key;
+  lastResults[key] = { payload, at: Date.now(), count: 0 };
+  const keys = Object.keys(lastResults);
+  if (keys.length > 50) {
+    keys.sort((a, b) => lastResults[a].at - lastResults[b].at);
+    for (const k of keys.slice(0, keys.length - 50)) delete lastResults[k];
+  }
   await saveState();
   await respond(hash8, payload);
 }
@@ -334,9 +355,15 @@ async function init() {
   setInterval(() => scheduleCheck(), 2500);
   chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     if (msg.type === 'inject-prompt') {
-      injectProtocol();
-      sendResponse({ ok: true });
-      return;
+      (async () => {
+        try {
+          await injectProtocol();
+          sendResponse({ ok: true, filled: true });
+        } catch (e) {
+          sendResponse({ ok: false, error: String((e && e.message) || e) });
+        }
+      })();
+      return true;
     }
     if (msg.type === 'health-check') {
       sendResponse({

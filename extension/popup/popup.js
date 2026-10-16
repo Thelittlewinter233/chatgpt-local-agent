@@ -67,7 +67,7 @@ $('injectPrompt').addEventListener('click', async () => {
   $('err').textContent = '正在注入协议…';
   const res = await chrome.runtime.sendMessage({ type: 'inject-prompt' }).catch(e => ({ ok: false, error: String(e) }));
   $('err').textContent = res && res.ok
-    ? '已注入：去任务标签页输入框查看，补充任务后发送'
+    ? '已注入协议到当前页面输入框，补充任务后发送'
     : '失败：' + ((res && res.error) || '未知');
 });
 
