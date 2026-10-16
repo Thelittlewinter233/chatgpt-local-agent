@@ -36,6 +36,11 @@ var __abMakeHeuristicAdapter = (() => {
       async insertText(text) {
         const el = this.findInput();
         if (!el) return false;
+        if (inputHasPending(el)) {
+          const cur = norm((el.textContent || '') + (el.value || ''));
+          if (cur === norm(text)) return true;
+          return false;
+        }
         el.focus();
         try {
           const dt = new DataTransfer();
@@ -68,18 +73,22 @@ var __abMakeHeuristicAdapter = (() => {
       async send() {
         const el = this.findInput();
         if (!el) return false;
-        for (let i = 0; i < 3; i++) {
+        const waitCleared = async () => {
+          for (let t = 0; t < 12; t++) {
+            await sleep(250);
+            if (!inputHasPending(el)) return true;
+          }
+          return false;
+        };
+        for (let i = 0; i < 2; i++) {
           const btn = findSendButton();
           if (btn && !btn.disabled) {
             btn.click();
-            await sleep(500);
-            if (!inputHasPending(el)) return true;
+          } else {
+            el.focus();
+            el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
           }
-          el.focus();
-          el.dispatchEvent(new KeyboardEvent('keydown', { key: 'Enter', code: 'Enter', keyCode: 13, which: 13, bubbles: true, cancelable: true }));
-          await sleep(600);
-          if (!inputHasPending(el)) return true;
-          await sleep(400);
+          if (await waitCleared()) return true;
         }
         return false;
       }

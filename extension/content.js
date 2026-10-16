@@ -9,6 +9,7 @@ let guard = { step: 0, failStreak: 0, lastHash8: '' };
 let seen = [];
 let lastResults = {};
 let processing = false;
+let cooldownUntil = 0;
 let checkTimer = null;
 let lastDbgKey = '';
 
@@ -118,6 +119,7 @@ function ensureLeaderPill(isLeader) {
 async function checkCycle() {
   try {
     if (processing || opts.paused) return;
+    if (Date.now() < cooldownUntil) return;
     if (isGenerating()) { dbg('generating'); return; }
     const raw1 = findLatestAgentBlock();
     if (!raw1) { dbg('no-agent-block-on-page'); return; }
@@ -245,6 +247,7 @@ async function respond(hash8, payload) {
   const sent = await ADAPTER.send();
   if (!sent) { highlight(true); toast('AgentBridge: 已填入未发送（发送失败），请手动按回车发送'); }
   else highlight(false);
+  cooldownUntil = Date.now() + 2500;
 }
 
 function highlight(on) {
