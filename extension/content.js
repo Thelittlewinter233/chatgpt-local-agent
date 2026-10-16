@@ -287,7 +287,7 @@ async function respond(hash8, payload) {
   const sent = await ADAPTER.send();
   if (!sent) { highlight(true); toast('AgentBridge: 已填入未发送（发送失败），请手动按回车发送'); }
   else highlight(false);
-  cooldownUntil = Date.now() + 2500;
+  cooldownUntil = Date.now() + 5000;
 }
 
 function highlight(on) {
