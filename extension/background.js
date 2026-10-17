@@ -9,6 +9,7 @@ let lastAckId = 0;
 let contentTabId = null;
 let leaderTabId = null;
 let rotateWaiter = null;
+let policyWaiter = null;
 const pending = new Map();
 const BACKOFF = [1000, 2000, 5000, 10000, 30000];
 
@@ -126,6 +127,14 @@ async function handleFrame(m) {
     return;
   }
   if (m.type === 'pong') return;
+  if (m.type === 'policy-updated' || m.type === 'policy') {
+    if (policyWaiter) {
+      const r = policyWaiter;
+      policyWaiter = null;
+      r(m.policy || {});
+    }
+    return;
+  }
   if (m.type === 'token-rotated') {
     if (rotateWaiter) {
       const r = rotateWaiter;
@@ -277,6 +286,32 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
       if (!token) { sendResponse({ ok: false, error: 'rotate timeout or refused' }); return; }
       await chrome.storage.local.set({ token });
       sendResponse({ ok: true, token });
+    })();
+    return true;
+  }
+  if (msg.type === 'get-policy') {
+    (async () => {
+      if (!authed) { sendResponse({ ok: false, error: 'not connected' }); return; }
+      const policy = await new Promise(resolve => {
+        policyWaiter = resolve;
+        send({ type: 'get-policy' });
+        setTimeout(() => { if (policyWaiter === resolve) { policyWaiter = null; resolve(null); } }, 8000);
+      });
+      if (!policy) { sendResponse({ ok: false, error: 'policy query timeout' }); return; }
+      sendResponse({ ok: true, policy });
+    })();
+    return true;
+  }
+  if (msg.type === 'set-policy') {
+    (async () => {
+      if (!authed) { sendResponse({ ok: false, error: 'not connected' }); return; }
+      const policy = await new Promise(resolve => {
+        policyWaiter = resolve;
+        send({ type: 'set-policy', patch: msg.patch || {} });
+        setTimeout(() => { if (policyWaiter === resolve) { policyWaiter = null; resolve(null); } }, 8000);
+      });
+      if (!policy) { sendResponse({ ok: false, error: 'policy update timeout' }); return; }
+      sendResponse({ ok: true, policy });
     })();
     return true;
   }

@@ -1,6 +1,8 @@
 {
   "port": 9752,
-  "allowedRoots": ["d:\\Desktop\\agent_project"],
+  "allowedRoots": [
+    "d:\\Desktop\\agent_project"
+  ],
   "defaultCwd": "d:\\Desktop\\agent_project",
   "defaultShell": "powershell",
   "shells": {
@@ -11,11 +13,40 @@
   "policy": {
     "defaultAllow": false,
     "confirmUnknown": true,
+    "allowOutOfRoots": false,
     "whitelist": [
-      "git", "node", "npm", "npx", "python", "pip", "dir", "ls", "get-childitem",
-      "type", "get-content", "echo", "write-output", "write-host", "cd", "set-location",
-      "pwd", "get-location", "rg", "select-string", "tree", "test-path", "get-item",
-      "copy-item", "new-item", "mkdir", "md", "get-process", "where", "where.exe", "timeout", "start-sleep"
+      "git",
+      "node",
+      "npm",
+      "npx",
+      "python",
+      "pip",
+      "dir",
+      "ls",
+      "get-childitem",
+      "type",
+      "get-content",
+      "echo",
+      "write-output",
+      "write-host",
+      "cd",
+      "set-location",
+      "pwd",
+      "get-location",
+      "rg",
+      "select-string",
+      "tree",
+      "test-path",
+      "get-item",
+      "copy-item",
+      "new-item",
+      "mkdir",
+      "md",
+      "get-process",
+      "where",
+      "where.exe",
+      "timeout",
+      "start-sleep"
     ]
   },
   "runtime": "runtime",

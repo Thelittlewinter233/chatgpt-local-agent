@@ -10,7 +10,7 @@ function safeEqual(a, b) {
   return ba.length === bb.length && timingSafeEqual(ba, bb);
 }
 
-export function startWsServer(config, dispatch, log, onRotate) {
+export function startWsServer(config, dispatch, log, onRotate, onSetPolicy) {
   const server = http.createServer((req, res) => { res.writeHead(404); res.end(); });
   const wss = new WebSocketServer({ noServer: true });
   const blocked = new Map();
@@ -87,6 +87,16 @@ export function startWsServer(config, dispatch, log, onRotate) {
         const token = onRotate();
         send(ws, { type: 'token-rotated', token });
         log('token rotated via authenticated request');
+        return;
+      }
+      if (m.type === 'set-policy') {
+        if (typeof onSetPolicy !== 'function') return send(ws, { type: 'policy-updated', policy: { allowOutOfRoots: !!config.policy?.allowOutOfRoots } });
+        const policy = onSetPolicy(m.patch);
+        send(ws, { type: 'policy-updated', policy });
+        return;
+      }
+      if (m.type === 'get-policy') {
+        send(ws, { type: 'policy', policy: { allowOutOfRoots: !!config.policy?.allowOutOfRoots, defaultAllow: !!config.policy?.defaultAllow } });
         return;
       }
       if (m.type === 'ack') { cache.delete(m.msgId); return; }

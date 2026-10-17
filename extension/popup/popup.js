@@ -88,6 +88,38 @@ $('openHealth').addEventListener('click', () => {
   window.open(chrome.runtime.getURL('health.html'));
 });
 
+async function refreshMode() {
+  const res = await chrome.runtime.sendMessage({ type: 'get-policy' }).catch(e => ({ ok: false, error: String(e) }));
+  if (res && res.ok) {
+    $('outOfRoots').checked = !!res.policy.allowOutOfRoots;
+    $('modeState').textContent = res.policy.allowOutOfRoots
+      ? '当前：完全放行（越界文件操作不再确认）'
+      : '当前：确认后放行（越界文件操作弹确认条）';
+  } else {
+    $('modeState').textContent = '读取失败：' + ((res && res.error) || '未知');
+  }
+}
+
+$('outOfRoots').addEventListener('change', async () => {
+  const enable = $('outOfRoots').checked;
+  if (enable && !confirm('开启完全批准模式？白名单外的文件写入/修改/移动将不再弹确认条，AI 可直接操作你电脑上的任意文本文件。')) {
+    $('outOfRoots').checked = false;
+    return;
+  }
+  $('modeState').textContent = '正在切换…';
+  const res = await chrome.runtime.sendMessage({ type: 'set-policy', patch: { allowOutOfRoots: enable } }).catch(e => ({ ok: false, error: String(e) }));
+  if (res && res.ok) {
+    $('modeState').textContent = enable
+      ? '当前：完全放行（越界文件操作不再确认）'
+      : '当前：确认后放行（越界文件操作弹确认条）';
+  } else {
+    $('modeState').textContent = '切换失败：' + ((res && res.error) || '未知');
+    refreshMode();
+  }
+});
+
+refreshMode();
+
 $('testConfirm').addEventListener('click', async () => {
   $('err').textContent = '已发送测试请求…';
   const res = await chrome.runtime.sendMessage({ type: 'test-confirm' }).catch(e => ({ ok: false, error: String(e) }));

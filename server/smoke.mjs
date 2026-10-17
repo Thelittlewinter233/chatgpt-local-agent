@@ -55,6 +55,47 @@ async function run() {
   assert(!outside.ok && outside.denied, 'path outside roots denial');
   const confirmed = await cmd('shell', { command: 'Get-Date -Format o', waitMs: 10000 });
   assert(confirmed.ok && confirmed.data.exitCode === 0, 'confirm flow approves non-whitelisted command');
+  const outsideWrite = path.join(path.dirname(config.allowedRoots[0]), 'smoke-outer-confirm.txt');
+  let confirms = 0;
+  const origOnMessage = ws.listeners('message');
+  ws.off('message', origOnMessage[0]);
+  ws.on('message', raw => {
+    const m = JSON.parse(raw.toString('utf8'));
+    if (m.type === 'hello_ok') return;
+    if (m.type === 'confirm-required') {
+      confirms += 1;
+      console.log('ok - confirm requested:', m.preview);
+      ws.send(JSON.stringify({ type: 'confirm-resolve', confirmId: m.confirmId, approved: true }));
+      return;
+    }
+    if (m.type === 'policy-updated' || m.type === 'policy') {
+      const w = waiters.get(-1);
+      if (w) { waiters.delete(-1); w(m.policy); }
+      return;
+    }
+    if (m.type === 'result') {
+      const w = waiters.get(m.msgId);
+      if (w) { waiters.delete(m.msgId); w(m.payload); }
+    }
+  });
+  const w1 = await cmd('fs_write', { path: outsideWrite, content: 'a' });
+  assert(w1.ok && confirms === 1, 'out-of-roots write goes through confirm bar');
+  function frame(type, extra) { ws.send(JSON.stringify({ type, ...extra })); }
+  function setPolicyMode(enabled) {
+    return new Promise(resolve => { waiters.set(-1, resolve); frame('set-policy', { patch: { allowOutOfRoots: enabled } }); });
+  }
+  const p1 = await setPolicyMode(true);
+  assert(p1 && p1.allowOutOfRoots === true, 'policy hot-switch to allow mode');
+  confirms = 0;
+  const w2 = await cmd('fs_write', { path: outsideWrite, content: 'b' });
+  assert(w2.ok && confirms === 0, 'out-of-roots write is direct in allow mode (no confirm)');
+  const p2 = await setPolicyMode(false);
+  assert(p2 && p2.allowOutOfRoots === false, 'policy hot-switch back to confirm mode');
+  const delOut = await cmd('fs_delete', { path: outsideWrite });
+  assert(delOut.ok && delOut.data.deleted, 'out-of-roots fs_delete with confirm');
+  confirms = 0;
+  const w3 = await cmd('fs_write', { path: outsideWrite, content: 'c' });
+  assert(w3.ok && confirms === 1, 'out-of-roots write requires confirm again after switching back');
   const term = await cmd('terminal_start', { shell: 'powershell' });
   assert(term.ok && term.data.sessionId, 'terminal_start returns sessionId');
   const tid = term.data.sessionId;

@@ -103,6 +103,10 @@ async function dispatch(action, args, ctx) {
     if (e && e.denied && /Path outside allowedRoots/.test(msg)
       && FS_MUTATING.has(action) && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
       const target = clip(args.path || args.from || '', 200);
+      if (config.policy?.allowOutOfRoots) {
+        bypassed = true;
+        return await route(action, args, { ...ctx, bypassRoots: true });
+      }
       const approved = await ctx.requestConfirm(`放行 ${action} 到 allowedRoots 外路径：${target}${args.to ? ' → ' + clip(args.to, 200) : ''}`);
       if (approved) {
         try {
@@ -199,7 +203,17 @@ function rotateToken() {
   return t;
 }
 
-startWsServer(config, dispatch, log, rotateToken);
+function setPolicy(patch) {
+  if (!patch || typeof patch !== 'object') return { allowOutOfRoots: !!config.policy?.allowOutOfRoots };
+  if ('allowOutOfRoots' in patch) config.policy.allowOutOfRoots = !!patch.allowOutOfRoots;
+  const base = readJson(path.join(ROOT, 'config.json'));
+  base.policy = { ...base.policy, allowOutOfRoots: !!config.policy.allowOutOfRoots };
+  atomicJson(path.join(ROOT, 'config.json'), base);
+  log('policy updated via extension:', JSON.stringify({ allowOutOfRoots: !!config.policy.allowOutOfRoots }));
+  return { allowOutOfRoots: !!config.policy.allowOutOfRoots };
+}
+
+startWsServer(config, dispatch, log, rotateToken, setPolicy);
 log('config:', JSON.stringify({
   port: config.port,
   allowedRoots: config.allowedRoots,

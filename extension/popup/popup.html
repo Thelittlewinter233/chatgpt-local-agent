@@ -30,6 +30,10 @@
   <button id="injectPrompt">注入协议到任务标签</button>
   <button id="rotateToken">轮换 Token（旧 token 立即失效）</button>
   <button id="openHealth">健康自检页</button>
+  <div class="mode" style="border:1px solid #374151;border-radius:8px;padding:8px;margin:8px 0">
+    <label><input type="checkbox" id="outOfRoots"> 完全批准模式（白名单外文件直接放行，不再弹确认条）</label>
+    <div id="modeState" class="dbg">读取当前模式…</div>
+  </div>
   <div class="opts">
     <div class="row"><label><input id="autoSend" type="checkbox"> 自动发送执行结果</label></div>
     <div class="row"><label><input id="paused" type="checkbox"> 暂停监听（不执行新指令）</label></div>
