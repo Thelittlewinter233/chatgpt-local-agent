@@ -2,7 +2,7 @@
   "manifest_version": 3,
   "name": "ChatGPT Local Agent Bridge",
   "version": "0.1.0",
-  "description": "把网页 AI 对话（ChatGPT/智谱/DeepSeek/Kimi/豆包）中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
+  "description": "把网页 AI 对话（ChatGPT/智谱/DeepSeek/Kimi/豆包/通义千问）中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
   "permissions": ["storage"],
   "background": { "scripts": ["background.js"] },
   "browser_specific_overrides": {
@@ -16,7 +16,9 @@
         "https://chat.deepseek.com/*",
         "https://www.kimi.com/*",
         "https://kimi.moonshot.cn/*",
-        "https://www.doubao.com/*"
+        "https://www.doubao.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://www.tongyi.com/*"
       ],
       "js": [
         "adapters/heuristic.js",
@@ -25,6 +27,7 @@
         "adapters/deepseek.js",
         "adapters/kimi.js",
         "adapters/doubao.js",
+        "adapters/qwen.js",
         "adapters/generic.js",
         "adapters/registry.js",
         "content.js"

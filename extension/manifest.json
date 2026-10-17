@@ -19,7 +19,9 @@
         "https://chat.deepseek.com/*",
         "https://www.kimi.com/*",
         "https://kimi.moonshot.cn/*",
-        "https://www.doubao.com/*"
+        "https://www.doubao.com/*",
+        "https://tongyi.aliyun.com/*",
+        "https://www.tongyi.com/*"
       ],
       "js": [
         "adapters/heuristic.js",
@@ -28,6 +30,7 @@
         "adapters/deepseek.js",
         "adapters/kimi.js",
         "adapters/doubao.js",
+        "adapters/qwen.js",
         "adapters/generic.js",
         "adapters/registry.js",
         "content.js"

@@ -1,6 +1,6 @@
 # ChatGPT Local Agent Bridge
 
-把 chatgpt.com 网页版（Free 档可用）接入本机 Agent：AI 在对话中输出 ` ```agent ` 指令块，Chrome 扩展捕获后交给本地服务真实执行（文件读写、PowerShell/Git Bash 命令、持久交互终端、后台会话），结果自动回填输入框并自动发送，形成"对话即操作电脑"的闭环。同时支持智谱清言、DeepSeek、Kimi、豆包等多个网页 AI 站点。
+把 chatgpt.com 网页版（Free 档可用）接入本机 Agent：AI 在对话中输出 ` ```agent ` 指令块，Chrome 扩展捕获后交给本地服务真实执行（文件读写、PowerShell/Git Bash 命令、持久交互终端、后台会话），结果自动回填输入框并自动发送，形成"对话即操作电脑"的闭环。同时支持智谱清言、DeepSeek、Kimi、豆包、通义千问等多个网页 AI 站点。
 
 ```
 你在网页 AI 对话里发任务
@@ -34,6 +34,7 @@
 │   │   ├── deepseek.js        # chat.deepseek.com（启发式首版）
 │   │   ├── kimi.js            # kimi.com / kimi.moonshot.cn（启发式首版）
 │   │   ├── doubao.js          # doubao.com 豆包（启发式首版）
+│   │   ├── qwen.js            # tongyi.aliyun.com / tongyi.com 通义千问（启发式首版）
 │   │   └── registry.js        # 按 location.hostname 选择适配器
 │   ├── content.js             # 站点无关主循环：检测/去重/回填/发送/确认条
 │   ├── background.js          # WS 状态机/重连/结果重放/多标签仲裁
@@ -126,7 +127,7 @@ AI 只需要会一件事：输出如下代码块，然后停下等结果。
 
 - 协议模板通用：任何站点新会话粘贴同一份 [docs/chat-prompt.md](docs/chat-prompt.md)，或直接 Alt+P 注入
 - 每个站点的去重记忆独立，互不干扰；但**步数计数全局共享**——换站点连跑大任务时留意 popup 进度
-- "启发式首版"的站点（DeepSeek/Kimi/豆包）如回填或发送不灵，按[故障排查](#故障排查)抓 DOM 信息反馈迭代
+- "启发式首版"的站点（DeepSeek/Kimi/豆包/通义千问）如回填或发送不灵，按[故障排查](#故障排查)抓 DOM 信息反馈迭代
 
 ### 5.6 进阶：用站点自带的"智能体"彻底免注入（零代码替代方案）
 
@@ -137,6 +138,7 @@ AI 只需要会一件事：输出如下代码块，然后停下等结果。
 | 智谱清言 | GLMs 智能体中心创建自定义智能体，把 `docs/chat-prompt.md` 正文贴进"系统提示词" |
 | Kimi | 创建"Kimi+"助手，提示词同上 |
 | 豆包 | 创建 Bot，人设与回复约束里贴协议 |
+| 通义千问 | 创建自定义智能体，把协议贴进"人设与回复指令"（系统提示词） |
 | DeepSeek C 端 | 无全局自定义指令，建议每次用 Alt+P 注入 |
 | chatgpt.com（Free） | 创建 GPT 需 Plus；Free 用 Alt+P 注入，或配"自定义指令"（见 docs/custom-instructions.md） |
 
