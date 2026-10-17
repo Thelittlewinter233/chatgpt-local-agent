@@ -73,7 +73,7 @@ export function classifyCommand(config, command, cwd, bypassRoots) {
   const deny = reason => ({ kind: 'deny', reason });
   if (typeof command !== 'string' || !command.trim()) return deny('command is required');
   if (command.length > 16000) return deny('command exceeds 16000 characters');
-  try { checkPath(config, cwd || config.defaultCwd, bypassRoots); }
+  try { checkPathResolved(config, cwd || config.defaultCwd, bypassRoots); }
   catch (e) { return { kind: 'deny', reason: e.message }; }
   for (const re of DENY_PATTERNS) if (re.test(command)) return deny(`blacklisted pattern in command: ${re}`);
   const policy = config.policy || {};
@@ -84,13 +84,14 @@ export function classifyCommand(config, command, cwd, bypassRoots) {
     const head = seg.replace(/^[-&@\s]+/, '').split(/[\s(]/)[0].toLowerCase();
     if (whitelist.has(head)) continue;
     if (policy.confirmUnknown) return { kind: 'confirm', head, reason: `command head "${head}" is outside the whitelist` };
+    if (config.policy?.allowOutOfRoots) continue;
     return deny(`command head "${head}" is not whitelisted; add it to config.policy.whitelist or set policy.defaultAllow=true`);
   }
   return { kind: 'ok' };
 }
 
-export function checkCommand(config, command, cwd) {
-  const verdict = classifyCommand(config, command, cwd);
+export function checkCommand(config, command, cwd, bypassRoots) {
+  const verdict = classifyCommand(config, command, cwd, bypassRoots);
   if (verdict.kind === 'deny') {
     const e = new Error(verdict.reason);
     e.denied = true;

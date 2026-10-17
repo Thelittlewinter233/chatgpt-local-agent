@@ -50,6 +50,13 @@ test('checkCommand skips whitelist when defaultAllow is on but keeps blacklist',
   assert.throws(() => checkCommand(cfg, 'format q:', undefined), e => e.denied === true);
 });
 
+test('checkCommand skips whitelist deny when allowOutOfRoots is on', () => {
+  const cfg = { ...config, policy: { ...config.policy, confirmUnknown: false, allowOutOfRoots: true } };
+  assert.deepEqual(checkCommand(cfg, 'curl https://example.com', undefined), { ok: true });
+  assert.throws(() => checkCommand({ ...config, policy: { ...config.policy, confirmUnknown: false } }, 'curl https://example.com', undefined), /not whitelisted/);
+  assert.throws(() => checkCommand(cfg, 'format q:', undefined), e => e.denied === true);
+});
+
 test('classifyCommand routes unknown heads to confirm when confirmUnknown is on', () => {
   const cfg = { ...config, policy: { defaultAllow: false, confirmUnknown: true, whitelist: ['node'] } };
   const verdict = classifyCommand(cfg, 'Get-Date -Format o', undefined);

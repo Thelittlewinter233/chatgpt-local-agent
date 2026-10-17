@@ -96,7 +96,7 @@ export function startWsServer(config, dispatch, log, onRotate, onSetPolicy) {
         return;
       }
       if (m.type === 'get-policy') {
-        send(ws, { type: 'policy', policy: { allowOutOfRoots: !!config.policy?.allowOutOfRoots, defaultAllow: !!config.policy?.defaultAllow } });
+        send(ws, { type: 'policy', policy: { allowOutOfRoots: !!config.policy?.allowOutOfRoots, confirmUnknown: !!config.policy?.confirmUnknown, defaultAllow: !!config.policy?.defaultAllow } });
         return;
       }
       if (m.type === 'ack') { cache.delete(m.msgId); return; }

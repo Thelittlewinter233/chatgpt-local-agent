@@ -66,12 +66,17 @@ async function run() {
   function setPolicyMode(enabled) {
     return new Promise(resolve => { waiters.set(-1, resolve); frame('set-policy', { patch: { allowOutOfRoots: enabled } }); });
   }
+  function setPolicyRaw(patch) {
+    return new Promise(resolve => { waiters.set(-1, resolve); frame('set-policy', { patch }); });
+  }
   function getPolicy() {
     return new Promise(resolve => { waiters.set(-1, resolve); frame('get-policy', {}); });
   }
   const origPolicy = await getPolicy();
   const origAllow = !!origPolicy.allowOutOfRoots;
-  if (origAllow) await setPolicyMode(false);
+  const origCU = origPolicy.confirmUnknown !== false;
+  const origDA = !!origPolicy.defaultAllow;
+  if (origAllow || origCU === false || origDA) await setPolicyRaw({ allowOutOfRoots: false, confirmUnknown: true, defaultAllow: false });
   const info = await cmd('computer_info', {});
   assert(info.ok && info.data.platform === 'win32', 'computer_info roundtrip');
   const target = path.join(config.allowedRoots[0], 'tmp', 'smoke.txt');
@@ -116,6 +121,10 @@ async function run() {
   assert(directShell.ok && confirms === 0, 'non-whitelisted shell is direct in allow mode (no confirm)');
   const cwdShell = await cmd('shell', { command: 'node -v', cwd: path.dirname(config.allowedRoots[0]) });
   assert(cwdShell.ok && cwdShell.data.exitCode === 0 && confirms === 0, 'out-of-roots shell cwd is direct in allow mode');
+  await setPolicyRaw({ allowOutOfRoots: true, confirmUnknown: false });
+  const noWl = await cmd('shell', { command: 'Get-Date -Format o', waitMs: 10000 });
+  assert(noWl.ok && confirms === 0, 'non-whitelisted shell is direct when confirmUnknown off in allow mode');
+  await setPolicyRaw({ confirmUnknown: true });
   const p2 = await setPolicyMode(false);
   assert(p2 && p2.allowOutOfRoots === false, 'policy hot-switch back to confirm mode');
   const w3 = await cmd('fs_write', { path: outsideWrite, content: 'c' });
@@ -144,7 +153,7 @@ async function run() {
   assert(!deniedWrite.ok && deniedWrite.denied, 'terminal input blacklist denial');
   const cl = await cmd('session_close', { sessionId: tid });
   assert(cl.ok, 'terminal close');
-  if (origAllow) await setPolicyMode(true);
+  await setPolicyRaw({ allowOutOfRoots: origAllow, confirmUnknown: origCU, defaultAllow: origDA });
   console.log('SMOKE PASS');
   clearTimeout(timeout);
   ws.close();

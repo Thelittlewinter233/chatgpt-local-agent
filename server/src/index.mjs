@@ -3,7 +3,7 @@ import path from 'node:path';
 import { ROOT, loadConfig, atomicJson, readJson, secret, sleep } from './engine/common.mjs';
 import { Sessions } from './engine/sessions.mjs';
 import { createFsTools } from './fs-tools.mjs';
-import { classifyCommand, checkTerminalInput, checkPath } from './policy.mjs';
+import { classifyCommand, checkTerminalInput, checkPath, checkPathResolved } from './policy.mjs';
 import { startWsServer } from './ws-server.mjs';
 
 const base = readJson(path.join(ROOT, 'config.json'));
@@ -42,7 +42,7 @@ function computerInfo() {
     policyMode: config.policy?.defaultAllow ? 'blacklist-only' : 'whitelist',
     limits: { maxActiveSessions: config.maxActiveSessions, waitMsMax: 60000, commandMaxLength: 16000 },
     notes: [
-      'File tools are restricted to allowedRoots; shell cwd must also be inside allowedRoots.',
+      'File tools are restricted to allowedRoots; shell/terminal cwd must also be inside allowedRoots unless the user approves via confirm bar or full-approval mode is on.',
       'shell runs as the current Windows user; whitelist gates command heads, blacklist always wins.',
       'terminal_start opens a persistent interactive PTY (variables/cwd/REPL persist across steps); use session_write then session_read; Ctrl+C via session_interrupt; close unused terminals. Terminal input is checked against the blacklist only.',
       'End a task with action "done" so the bridge resets its step counters.'
@@ -104,7 +104,8 @@ async function dispatch(action, args, ctx) {
     const bypassEligible = FS_MUTATING.has(action) || allowAllFs || action === 'shell' || action === 'terminal_start';
     if (e && e.denied && /Path outside allowedRoots/.test(msg)
       && bypassEligible && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
-      const target = clip(args.path || args.from || args.cwd || '', 200);
+      const deniedPath = /Path outside allowedRoots: ([^;]+);/.exec(msg);
+      const target = clip(deniedPath ? deniedPath[1] : (args.path || args.from || args.cwd || ''), 200);
       if (config.policy?.allowOutOfRoots) {
         bypassed = true;
         return await route(action, args, { ...ctx, bypassRoots: true });
@@ -127,7 +128,7 @@ async function dispatch(action, args, ctx) {
     outcome = e && e.denied ? 'denied' : 'error';
     throw e;
   } finally {
-    if (mutating.includes(action)) {
+    if (mutating.includes(action) || bypassed) {
       audit({
         action,
         outcome,
@@ -180,11 +181,11 @@ async function route(action, args, ctx) {
     case 'session_list': return { sessions: await sessions.list() };
     case 'session_close': return sessions.request(args.sessionId, 'close');
     case 'terminal_start': {
-      checkPath(config, args.cwd || config.defaultCwd, ctx && ctx.bypassRoots);
+      const realCwd = checkPathResolved(config, args.cwd || config.defaultCwd, ctx && ctx.bypassRoots);
       const state = await sessions.start({
         kind: 'terminal',
         shell: args.shell,
-        cwd: args.cwd,
+        cwd: realCwd,
         env: {},
         cols: args.cols,
         rows: args.rows,
@@ -213,13 +214,20 @@ function rotateToken() {
 }
 
 function setPolicy(patch) {
-  if (!patch || typeof patch !== 'object') return { allowOutOfRoots: !!config.policy?.allowOutOfRoots };
-  if ('allowOutOfRoots' in patch) config.policy.allowOutOfRoots = !!patch.allowOutOfRoots;
+  const view = () => ({
+    allowOutOfRoots: !!config.policy?.allowOutOfRoots,
+    confirmUnknown: !!config.policy?.confirmUnknown,
+    defaultAllow: !!config.policy?.defaultAllow
+  });
+  if (!patch || typeof patch !== 'object') return view();
+  for (const key of ['allowOutOfRoots', 'confirmUnknown', 'defaultAllow']) {
+    if (key in patch) config.policy[key] = !!patch[key];
+  }
   const base = readJson(path.join(ROOT, 'config.json'));
-  base.policy = { ...base.policy, allowOutOfRoots: !!config.policy.allowOutOfRoots };
+  base.policy = { ...base.policy, ...view() };
   atomicJson(path.join(ROOT, 'config.json'), base);
-  log('policy updated via extension:', JSON.stringify({ allowOutOfRoots: !!config.policy.allowOutOfRoots }));
-  return { allowOutOfRoots: !!config.policy.allowOutOfRoots };
+  log('policy updated via extension:', JSON.stringify(view()));
+  return view();
 }
 
 startWsServer(config, dispatch, log, rotateToken, setPolicy);
