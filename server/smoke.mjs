@@ -89,13 +89,14 @@ async function run() {
   confirms = 0;
   const w2 = await cmd('fs_write', { path: outsideWrite, content: 'b' });
   assert(w2.ok && confirms === 0, 'out-of-roots write is direct in allow mode (no confirm)');
+  const d2 = await cmd('fs_delete', { path: outsideWrite });
+  assert(d2.ok && d2.data.deleted && confirms === 0, 'fs_delete is confirm-free in allow mode');
   const p2 = await setPolicyMode(false);
   assert(p2 && p2.allowOutOfRoots === false, 'policy hot-switch back to confirm mode');
-  const delOut = await cmd('fs_delete', { path: outsideWrite });
-  assert(delOut.ok && delOut.data.deleted, 'out-of-roots fs_delete with confirm');
-  confirms = 0;
   const w3 = await cmd('fs_write', { path: outsideWrite, content: 'c' });
   assert(w3.ok && confirms === 1, 'out-of-roots write requires confirm again after switching back');
+  const delOut = await cmd('fs_delete', { path: outsideWrite });
+  assert(delOut.ok && delOut.data.deleted && confirms === 2, 'fs_delete requires confirm again after switching back');
   const term = await cmd('terminal_start', { shell: 'powershell' });
   assert(term.ok && term.data.sessionId, 'terminal_start returns sessionId');
   const tid = term.data.sessionId;

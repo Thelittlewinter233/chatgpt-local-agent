@@ -158,6 +158,9 @@ async function route(action, args, ctx) {
         if (e && e.denied && /Path outside allowedRoots/.test(String(e.message || ''))) outOfRoots = true;
         else throw e;
       }
+      if (config.policy?.allowOutOfRoots) {
+        return fsTools.del(args, outOfRoots ? { ...ctx, bypassRoots: true } : ctx);
+      }
       const preview = outOfRoots ? `删除文件（路径在 allowedRoots 之外，将临时放行）：${p}` : `删除文件：${p}`;
       const approved = await ctx.requestConfirm(preview);
       if (!approved) {
