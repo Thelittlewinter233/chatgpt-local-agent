@@ -337,6 +337,13 @@ function showConfirmBar(confirmId, preview) {
   const no = document.createElement('button');
   no.textContent = '拒绝';
   no.style.cssText = 'padding:5px 14px;border:0;border-radius:6px;background:#374151;color:#f9fafb;cursor:pointer';
+  const close = document.createElement('button');
+  close.textContent = '×';
+  close.title = '关闭（忽略此请求，不执行也不回复结果）';
+  close.style.cssText = 'position:absolute;top:6px;right:8px;width:22px;height:22px;padding:0;border:0;border-radius:6px;background:transparent;color:#9ca3af;font-size:16px;line-height:22px;cursor:pointer';
+  close.addEventListener('mouseenter', () => { close.style.color = '#f9fafb'; close.style.background = '#374151'; });
+  close.addEventListener('mouseleave', () => { close.style.color = '#9ca3af'; close.style.background = 'transparent'; });
+  close.addEventListener('click', () => removeConfirmBar());
   const timer = document.createElement('span');
   timer.style.cssText = 'margin-left:auto;color:#9ca3af;font-size:12px';
   timer.textContent = '等待你的选择（不自动拒绝）';
@@ -347,7 +354,7 @@ function showConfirmBar(confirmId, preview) {
   yes.addEventListener('click', () => resolve(true));
   no.addEventListener('click', () => resolve(false));
   row.append(yes, no, timer);
-  bar.append(label, code, row);
+  bar.append(label, code, row, close);
   document.body.appendChild(bar);
 }
 
