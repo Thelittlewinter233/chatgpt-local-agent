@@ -47,6 +47,14 @@ async function run() {
   assert(wf.ok && wf.data.bytes > 0, 'fs_write with CJK content');
   const rd = await cmd('fs_read', { path: target });
   assert(rd.ok && rd.data.content.includes('你好'), 'fs_read roundtrip');
+  const multiT = path.join(config.allowedRoots[0], 'tmp', 'smoke-multi.txt');
+  await cmd('fs_write', { path: multiT, content: 'smoke one\nsmoke two\nsmoke three\n' });
+  const em = await cmd('fs_edit_multi', { path: multiT, edits: [{ oldText: 'one', newText: 'ONE' }, { oldText: 'three', newText: 'THREE' }] });
+  assert(em.ok && em.data.replacements === 2, 'fs_edit_multi applies batch edits atomically');
+  const gl = await cmd('fs_glob', { path: config.allowedRoots[0], pattern: 'tmp/smoke*.txt' });
+  assert(gl.ok && gl.data.matches.some(p => p.endsWith('smoke-multi.txt')), 'fs_glob matches glob pattern');
+  const gr = await cmd('fs_grep', { path: path.join(config.allowedRoots[0], 'tmp'), pattern: 'smoke', glob: '*.txt' });
+  assert(gr.ok && gr.data.matches.length >= 2 && gr.data.matches[0].line >= 1, 'fs_grep finds content with line numbers');
   const sh = await cmd('shell', { command: 'node -v', waitMs: 15000 });
   assert(sh.ok && sh.data.exitCode === 0 && /v\d+/.test(sh.data.output), 'shell node -v with real exit code');
   const black = await cmd('shell', { command: 'node -e "1" ; del x' });

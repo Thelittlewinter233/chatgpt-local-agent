@@ -54,9 +54,12 @@
 | fs_read | {path, tailBytes?} 或 {path, offsetBytes?, maxBytes?} | 读 UTF-8 文本文件：tailBytes 读末尾 N 字节；offsetBytes 从指定字节处续读（用返回的 nextOffset 翻页，单页默认 256KB） |
 | fs_write | {path, content} | 覆盖写入文本文件（自动建父目录） |
 | fs_edit | {path, oldText, newText, expectedCount?, expectedSha256?} | 精确替换；oldText 必须恰好出现 expectedCount 次（默认 1）否则不写入 |
+| fs_edit_multi | {path, edits: [{oldText, newText, expectedCount?}...], expectedSha256?} | 批量替换：按顺序应用多处编辑（后一处看到前一处的结果），全部校验通过才原子写入，任一失败文件不变；单次最多 20 处 |
 | fs_list | {path} | 列目录 |
 | fs_tree | {path, depth?} | 目录树（深度 1-4） |
-| fs_search | {path, pattern} | 按文件名通配符搜索（如 "*.py"） |
+| fs_search | {path, pattern} | 按文件名通配符搜索（如 "*.py"，仅匹配单层文件名） |
+| fs_glob | {path, pattern} | 按 glob 模式匹配文件路径，** 可跨目录（如 "**/*.py"），返回完整路径列表 |
+| fs_grep | {path, pattern, glob?, ignoreCase?, maxResults?} | 按正则搜索文件内容，返回 {file, line, text}；glob 过滤文件名（支持 **）；默认区分大小写；默认最多 100 条 |
 | fs_move | {from, to} | 移动/重命名（目标存在则失败） |
 | fs_mkdir | {path} | 创建目录 |
 | fs_info | {path} | 文件属性 |

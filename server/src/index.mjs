@@ -89,10 +89,10 @@ async function runShell(args, ctx) {
   return { ...result, sessionId: state.id };
 }
 
-const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'fs_delete']);
+const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_edit_multi', 'fs_move', 'fs_mkdir', 'fs_delete']);
 
 async function dispatch(action, args, ctx) {
-  const mutating = ['fs_write', 'fs_edit', 'fs_move', 'fs_mkdir', 'fs_delete', 'shell', 'terminal_start', 'session_write', 'session_close'];
+  const mutating = ['fs_write', 'fs_edit', 'fs_edit_multi', 'fs_move', 'fs_mkdir', 'fs_delete', 'shell', 'terminal_start', 'session_write', 'session_close'];
   const started = Date.now();
   let outcome = 'ok';
   let bypassed = false;
@@ -144,6 +144,9 @@ async function route(action, args, ctx) {
     case 'fs_read': return fsTools.read(args, ctx);
     case 'fs_write': return fsTools.write(args, ctx);
     case 'fs_edit': return fsTools.edit(args, ctx);
+    case 'fs_edit_multi': return fsTools.editMulti(args, ctx);
+    case 'fs_glob': return fsTools.glob(args, ctx);
+    case 'fs_grep': return fsTools.grep(args, ctx);
     case 'fs_list': return fsTools.list(args, ctx);
     case 'fs_tree': return fsTools.tree(args, ctx);
     case 'fs_search': return fsTools.search(args, ctx);

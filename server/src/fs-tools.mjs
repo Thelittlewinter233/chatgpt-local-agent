@@ -19,6 +19,26 @@ function toRegex(pattern) {
   return new RegExp(`^${escaped}$`, 'i');
 }
 
+function globToRegex(pattern) {
+  const escaped = pattern
+    .replace(/[.+^${}()|[\]\\]/g, '\\$&')
+    .replace(/\*\*/g, '\u0000')
+    .replace(/\*/g, '[^/]*')
+    .replace(/\?/g, '[^/]')
+    .replace(/\u0000/g, '.*');
+  return new RegExp(`^${escaped}$`, 'i');
+}
+
+function atomicWrite(file, before, buffer) {
+  const target = fs.realpathSync(file);
+  const temp = `${target}.agent-${process.pid}.tmp`;
+  try {
+    fs.writeFileSync(temp, buffer, { mode: fs.statSync(target).mode });
+    if (hash(fs.readFileSync(target)) !== hash(before)) throw new Error('File changed during edit; retry after reading');
+    replaceFile(temp, target);
+  } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
+}
+
 export function createFsTools(config) {
   async function read(args, ctx) {
     const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
@@ -77,14 +97,31 @@ export function createFsTools(config) {
     const count = text.split(args.oldText).length - 1;
     if (count !== expected) throw new Error(`Expected ${expected} occurrences, found ${count}; file unchanged`);
     const after = Buffer.from(text.split(args.oldText).join(args.newText), 'utf8');
-    const target = fs.realpathSync(file);
-    const temp = `${target}.agent-${process.pid}.tmp`;
-    try {
-      fs.writeFileSync(temp, after, { mode: fs.statSync(target).mode });
-      if (hash(fs.readFileSync(target)) !== hash(before)) throw new Error('File changed during edit; retry after reading');
-      replaceFile(temp, target);
-    } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
-    return { path: target, replacements: count, sha256: hash(after) };
+    atomicWrite(file, before, after);
+    return { path: fs.realpathSync(file), replacements: count, sha256: hash(after) };
+  }
+
+  async function editMulti(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    if (!Array.isArray(args.edits) || !args.edits.length) throw new Error('edits must be a non-empty array');
+    if (args.edits.length > 20) throw new Error('too many edits in one call (max 20)');
+    const before = fs.readFileSync(file);
+    if (args.expectedSha256 && hash(before) !== args.expectedSha256) throw new Error('Stale content: SHA-256 mismatch');
+    let text = before.toString('utf8');
+    let replacements = 0;
+    for (let i = 0; i < args.edits.length; i++) {
+      const e = args.edits[i] || {};
+      if (typeof e.oldText !== 'string' || !e.oldText) throw new Error(`edits[${i}].oldText must be a non-empty string`);
+      if (typeof e.newText !== 'string') throw new Error(`edits[${i}].newText must be a string`);
+      const expected = e.expectedCount ?? 1;
+      const count = text.split(e.oldText).length - 1;
+      if (count !== expected) throw new Error(`edits[${i}]: expected ${expected} occurrences, found ${count}; file unchanged`);
+      text = text.split(e.oldText).join(e.newText);
+      replacements += count;
+    }
+    const after = Buffer.from(text, 'utf8');
+    atomicWrite(file, before, after);
+    return { path: fs.realpathSync(file), edits: args.edits.length, replacements, sha256: hash(after) };
   }
 
   async function list(args, ctx) {
@@ -130,6 +167,61 @@ export function createFsTools(config) {
     return { path: root, pattern: args.pattern, matches };
   }
 
+  async function glob(args, ctx) {
+    const root = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
+    const re = globToRegex(args.pattern);
+    const matches = [];
+    const walk = dir => {
+      if (matches.length >= MAX_SEARCH_RESULTS) return;
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (matches.length >= MAX_SEARCH_RESULTS) return;
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full);
+        } else if (re.test(path.relative(root, full).replace(/\\/g, '/'))) matches.push(full);
+      }
+    };
+    walk(root);
+    return { path: root, pattern: args.pattern, matches, truncated: matches.length >= MAX_SEARCH_RESULTS };
+  }
+
+  async function grep(args, ctx) {
+    const root = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
+    let re;
+    try { re = new RegExp(args.pattern, args.ignoreCase ? 'i' : ''); }
+    catch (e) { throw new Error(`Invalid regex: ${e.message}`); }
+    const nameRe = args.glob ? globToRegex(args.glob) : null;
+    const max = Math.min(Math.max(Number(args.maxResults) || 100, 1), MAX_SEARCH_RESULTS);
+    const matches = [];
+    let truncated = false;
+    const walk = dir => {
+      for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (matches.length >= max) { truncated = true; return; }
+        const full = path.join(dir, e.name);
+        if (e.isDirectory()) {
+          if (!e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full);
+          continue;
+        }
+        if (!e.isFile()) continue;
+        if (nameRe && !nameRe.test(e.name)) continue;
+        let buf;
+        try { buf = fs.readFileSync(full); } catch { continue; }
+        if (buf.length > 2 * 1024 * 1024 || buf.subarray(0, 8192).includes(0)) continue;
+        const lines = buf.toString('utf8').split(/\r?\n/);
+        for (let i = 0; i < lines.length; i++) {
+          if (re.test(lines[i])) {
+            matches.push({ file: full, line: i + 1, text: lines[i].slice(0, 500) });
+            if (matches.length >= max) { truncated = true; break; }
+          }
+        }
+      }
+    };
+    walk(root);
+    return { path: root, pattern: args.pattern, glob: args.glob || null, matches, truncated };
+  }
+
   async function move(args, ctx) {
     const from = checkPath(config, args.from, ctx && ctx.bypassRoots);
     const to = checkPath(config, args.to, ctx && ctx.bypassRoots);
@@ -165,5 +257,5 @@ export function createFsTools(config) {
     return { path: file, deleted: true };
   }
 
-  return { read, write, edit, list, tree, search, move, mkdir, info, del };
+  return { read, write, edit, editMulti, list, tree, search, glob, grep, move, mkdir, info, del };
 }

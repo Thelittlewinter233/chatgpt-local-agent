@@ -70,6 +70,68 @@ test('edit fails on stale sha256', async () => {
   await assert.rejects(() => tools.edit({ path: path.join(root, 'a.txt'), oldText: 'hello', newText: 'no', expectedSha256: '0'.repeat(64) }), /Stale/);
 });
 
+test('editMulti applies multiple edits in order', async () => {
+  const f = path.join(root, 'multi.txt');
+  fs.writeFileSync(f, 'alpha\nbeta\ngamma\n');
+  const r = await tools.editMulti({
+    path: f,
+    edits: [
+      { oldText: 'alpha', newText: 'ALPHA' },
+      { oldText: 'beta', newText: 'BETA', expectedCount: 1 },
+      { oldText: 'gamma', newText: 'GAMMA' }
+    ]
+  });
+  assert.equal(r.edits, 3);
+  assert.equal(r.replacements, 3);
+  assert.equal(fs.readFileSync(f, 'utf8'), 'ALPHA\nBETA\nGAMMA\n');
+});
+
+test('editMulti is atomic: failing later edit leaves file unchanged', async () => {
+  const f = path.join(root, 'multi-atomic.txt');
+  const before = 'keep\nsave\n';
+  fs.writeFileSync(f, before);
+  await assert.rejects(() => tools.editMulti({
+    path: f,
+    edits: [
+      { oldText: 'keep', newText: 'changed', expectedCount: 1 },
+      { oldText: 'missing', newText: 'x' }
+    ]
+  }), /edits\[1\]: expected 1 occurrences, found 0/);
+  assert.equal(fs.readFileSync(f, 'utf8'), before);
+});
+
+test('glob matches recursive patterns and skips node_modules and hidden dirs', async () => {
+  await tools.mkdir({ path: path.join(root, 'g1', 'g2') });
+  await tools.write({ path: path.join(root, 'g1', 'g2', 'x.py'), content: 'x' });
+  await tools.write({ path: path.join(root, 'g1', 'y.py'), content: 'y' });
+  fs.mkdirSync(path.join(root, 'g1', 'node_modules'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'g1', 'node_modules', 'z.py'), 'z');
+  fs.mkdirSync(path.join(root, 'g1', '.hidden'), { recursive: true });
+  fs.writeFileSync(path.join(root, 'g1', '.hidden', 'h.py'), 'h');
+  const g = await tools.glob({ path: root, pattern: '**/*.py' });
+  const rels = g.matches.map(p => path.relative(root, p).replace(/\\/g, '/')).sort();
+  assert.deepEqual(rels, ['g1/g2/x.py', 'g1/y.py']);
+  const single = await tools.glob({ path: root, pattern: '*.txt' });
+  const singleRels = single.matches.map(p => path.relative(root, p).replace(/\\/g, '/'));
+  assert.ok(singleRels.length > 0 && singleRels.every(p => !p.includes('/')));
+});
+
+test('grep finds content with line numbers and honors glob and maxResults', async () => {
+  await tools.write({ path: path.join(root, 'src.txt'), content: 'foo bar\nBAZ qux\nnothing here\n' });
+  await tools.write({ path: path.join(root, 'other.md'), content: 'foo in md\n' });
+  const g1 = await tools.grep({ path: root, pattern: 'foo', glob: '*.txt' });
+  assert.equal(g1.matches.length, 1);
+  assert.equal(g1.matches[0].file, path.join(root, 'src.txt'));
+  assert.equal(g1.matches[0].line, 1);
+  const g2 = await tools.grep({ path: root, pattern: 'baz', ignoreCase: true, glob: '*.txt' });
+  assert.equal(g2.matches[0].line, 2);
+  const g3 = await tools.grep({ path: root, pattern: 'baz', glob: '*.txt' });
+  assert.equal(g3.matches.length, 0);
+  const g4 = await tools.grep({ path: root, pattern: 'e', glob: '*.txt', maxResults: 2 });
+  assert.ok(g4.matches.length <= 2);
+  await assert.rejects(() => tools.grep({ path: root, pattern: '([bad' }), /Invalid regex/);
+});
+
 test('list, tree, search, mkdir, move, info', async () => {
   await tools.mkdir({ path: path.join(root, 'sub', 'deep') });
   await tools.write({ path: path.join(root, 'sub', 'deep', 'b.log'), content: 'x' });
