@@ -124,7 +124,7 @@ npm run start
 | 浏览器 | 支持方式 | 说明 |
 |---|---|---|
 | Chrome / Edge / 其他 Chromium | 直接加载 `extension/` 目录 | 零改动。Edge 在 `edge://extensions` 打开开发者模式后加载即可，所有 API 通用 |
-| Firefox 109+ | 使用 `manifest.firefox.json` | Firefox MV3 的 background 只认 event page 形式（`scripts`），不认 Chrome 的 `service_worker`，因此需要替换清单文件 |
+| Firefox 140+ | 使用 `manifest.firefox.json` | Firefox MV3 的 background 只认 event page 形式（`scripts`），不认 Chrome 的 `service_worker`，因此需要替换清单文件；已通过 web-ext lint 零错误零警告校验 |
 
 Firefox 加载步骤：
 
@@ -134,6 +134,12 @@ Firefox 加载步骤：
 4. 恢复 Chrome 使用时把 `manifest.json` 换回仓库原版（`git checkout -- extension/manifest.json`）
 
 已知差异：Firefox 的 content script 对 `window` 挂载采用 Xray 视角，适配器全局已改用 `var` 声明以兼容两个内核；其余 API（storage/tabs/action/WebSocket/剪贴板注入）双内核通用。
+
+Firefox 注意事项：
+
+- **持久安装**（Developer Edition 签名豁免模式）：Firefox MV3 的 `host_permissions` 安装时不自动授予——若"检测站点域名跳转"或"手动添加域名"不生效，去 `about:addons` → Agent Bridge → **权限**标签，把"访问你的所有网站数据"等项开启
+- 临时加载（`about:debugging`）会自动授予全部声明的权限，无此问题
+- Chrome/Edge 完全没有该问题（host_permissions 安装时即授予）
 
 ## 详细使用指南
 

@@ -371,15 +371,7 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     return true;
   }
   if (msg.type === 'add-site-domain') {
-    (async () => {
-      try {
-        if (chrome.permissions && chrome.permissions.request) {
-          await chrome.permissions.request({ origins: ['https://' + String(msg.host || '').trim().toLowerCase() + '/*'] }).catch(() => { });
-        }
-      } catch { }
-      const r = await addSiteDomain(msg.host);
-      sendResponse(r);
-    })();
+    addSiteDomain(msg.host).then(sendResponse).catch(e => sendResponse({ ok: false, error: String(e && e.message || e) }));
     return true;
   }
   if (msg.type === 'wake') {

@@ -157,6 +157,11 @@ $('probeDomains').addEventListener('click', async () => {
 $('addDomain').addEventListener('click', async () => {
   const host = $('extraDomain').value.trim();
   if (!host) return;
+  try {
+    if (chrome.permissions && chrome.permissions.request) {
+      await chrome.permissions.request({ origins: ['https://' + host.toLowerCase() + '/*'] }).catch(() => { });
+    }
+  } catch { }
   const res = await chrome.runtime.sendMessage({ type: 'add-site-domain', host }).catch(e => ({ ok: false, error: String(e) }));
   $('extraDomain').value = '';
   $('err').textContent = res && res.ok ? '已添加域名并注入脚本：' + res.host : '失败：' + ((res && res.error) || '未知');
