@@ -100,8 +100,9 @@ async function dispatch(action, args, ctx) {
     return await route(action, args, ctx);
   } catch (e) {
     const msg = String((e && e.message) || e);
+    const allowAllFs = config.policy?.allowOutOfRoots && action.startsWith('fs_');
     if (e && e.denied && /Path outside allowedRoots/.test(msg)
-      && FS_MUTATING.has(action) && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
+      && (FS_MUTATING.has(action) || allowAllFs) && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
       const target = clip(args.path || args.from || '', 200);
       if (config.policy?.allowOutOfRoots) {
         bypassed = true;

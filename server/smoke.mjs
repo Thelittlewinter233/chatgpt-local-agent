@@ -40,6 +40,38 @@ const assert = (cond, name) => {
 };
 
 async function run() {
+  let confirms = 0;
+  const origOnMessage = ws.listeners('message');
+  ws.off('message', origOnMessage[0]);
+  ws.on('message', raw => {
+    const m = JSON.parse(raw.toString('utf8'));
+    if (m.type === 'hello_ok') return;
+    if (m.type === 'confirm-required') {
+      confirms += 1;
+      console.log('ok - confirm requested:', m.preview);
+      ws.send(JSON.stringify({ type: 'confirm-resolve', confirmId: m.confirmId, approved: true }));
+      return;
+    }
+    if (m.type === 'policy-updated' || m.type === 'policy') {
+      const w = waiters.get(-1);
+      if (w) { waiters.delete(-1); w(m.policy); }
+      return;
+    }
+    if (m.type === 'result') {
+      const w = waiters.get(m.msgId);
+      if (w) { waiters.delete(m.msgId); w(m.payload); }
+    }
+  });
+  function frame(type, extra) { ws.send(JSON.stringify({ type, ...extra })); }
+  function setPolicyMode(enabled) {
+    return new Promise(resolve => { waiters.set(-1, resolve); frame('set-policy', { patch: { allowOutOfRoots: enabled } }); });
+  }
+  function getPolicy() {
+    return new Promise(resolve => { waiters.set(-1, resolve); frame('get-policy', {}); });
+  }
+  const origPolicy = await getPolicy();
+  const origAllow = !!origPolicy.allowOutOfRoots;
+  if (origAllow) await setPolicyMode(false);
   const info = await cmd('computer_info', {});
   assert(info.ok && info.data.platform === 'win32', 'computer_info roundtrip');
   const target = path.join(config.allowedRoots[0], 'tmp', 'smoke.txt');
@@ -64,39 +96,16 @@ async function run() {
   const confirmed = await cmd('shell', { command: 'Get-Date -Format o', waitMs: 10000 });
   assert(confirmed.ok && confirmed.data.exitCode === 0, 'confirm flow approves non-whitelisted command');
   const outsideWrite = path.join(path.dirname(config.allowedRoots[0]), 'smoke-outer-confirm.txt');
-  let confirms = 0;
-  const origOnMessage = ws.listeners('message');
-  ws.off('message', origOnMessage[0]);
-  ws.on('message', raw => {
-    const m = JSON.parse(raw.toString('utf8'));
-    if (m.type === 'hello_ok') return;
-    if (m.type === 'confirm-required') {
-      confirms += 1;
-      console.log('ok - confirm requested:', m.preview);
-      ws.send(JSON.stringify({ type: 'confirm-resolve', confirmId: m.confirmId, approved: true }));
-      return;
-    }
-    if (m.type === 'policy-updated' || m.type === 'policy') {
-      const w = waiters.get(-1);
-      if (w) { waiters.delete(-1); w(m.policy); }
-      return;
-    }
-    if (m.type === 'result') {
-      const w = waiters.get(m.msgId);
-      if (w) { waiters.delete(m.msgId); w(m.payload); }
-    }
-  });
+  confirms = 0;
   const w1 = await cmd('fs_write', { path: outsideWrite, content: 'a' });
   assert(w1.ok && confirms === 1, 'out-of-roots write goes through confirm bar');
-  function frame(type, extra) { ws.send(JSON.stringify({ type, ...extra })); }
-  function setPolicyMode(enabled) {
-    return new Promise(resolve => { waiters.set(-1, resolve); frame('set-policy', { patch: { allowOutOfRoots: enabled } }); });
-  }
   const p1 = await setPolicyMode(true);
   assert(p1 && p1.allowOutOfRoots === true, 'policy hot-switch to allow mode');
   confirms = 0;
   const w2 = await cmd('fs_write', { path: outsideWrite, content: 'b' });
   assert(w2.ok && confirms === 0, 'out-of-roots write is direct in allow mode (no confirm)');
+  const rOut = await cmd('fs_read', { path: outsideWrite });
+  assert(rOut.ok && rOut.data.content === 'b', 'out-of-roots read is direct in allow mode (no confirm)');
   const d2 = await cmd('fs_delete', { path: outsideWrite });
   assert(d2.ok && d2.data.deleted && confirms === 0, 'fs_delete is confirm-free in allow mode');
   const p2 = await setPolicyMode(false);
@@ -125,6 +134,7 @@ async function run() {
   assert(!deniedWrite.ok && deniedWrite.denied, 'terminal input blacklist denial');
   const cl = await cmd('session_close', { sessionId: tid });
   assert(cl.ok, 'terminal close');
+  if (origAllow) await setPolicyMode(true);
   console.log('SMOKE PASS');
   clearTimeout(timeout);
   ws.close();
