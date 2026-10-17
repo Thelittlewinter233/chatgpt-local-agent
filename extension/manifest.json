@@ -21,7 +21,9 @@
         "https://kimi.moonshot.cn/*",
         "https://www.doubao.com/*",
         "https://tongyi.aliyun.com/*",
-        "https://www.tongyi.com/*"
+        "https://www.tongyi.com/*",
+        "https://qianwen.com/*",
+        "https://www.qianwen.com/*"
       ],
       "js": [
         "adapters/heuristic.js",

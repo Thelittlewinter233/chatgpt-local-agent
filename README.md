@@ -34,7 +34,7 @@
 │   │   ├── deepseek.js        # chat.deepseek.com（启发式首版）
 │   │   ├── kimi.js            # kimi.com / kimi.moonshot.cn（启发式首版）
 │   │   ├── doubao.js          # doubao.com 豆包（启发式首版）
-│   │   ├── qwen.js            # tongyi.aliyun.com / tongyi.com 通义千问（启发式首版）
+│   │   ├── qwen.js            # qianwen.com 千问（原 tongyi.com，已实测 DOM）/ tongyi.aliyun.com
 │   │   └── registry.js        # 按 location.hostname 选择适配器
 │   ├── content.js             # 站点无关主循环：检测/去重/回填/发送/确认条
 │   ├── background.js          # WS 状态机/重连/结果重放/多标签仲裁
