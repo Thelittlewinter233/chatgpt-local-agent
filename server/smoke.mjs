@@ -89,6 +89,10 @@ async function run() {
   assert(gr.ok && gr.data.matches.length >= 2 && gr.data.matches[0].line >= 1, 'fs_grep finds content with line numbers');
   const sh = await cmd('shell', { command: 'node -v', waitMs: 15000 });
   assert(sh.ok && sh.data.exitCode === 0 && /v\d+/.test(sh.data.output), 'shell node -v with real exit code');
+  const longScript = path.join(config.allowedRoots[0], 'tmp', 'smoke-long.js');
+  await cmd('fs_write', { path: longScript, content: 'setTimeout(function(){console.log("long-wait-ok")},22000)\n' });
+  const longWait = await cmd('shell', { command: 'node ' + longScript, waitMs: 30000 });
+  assert(longWait.ok && longWait.data.exitCode === 0 && /long-wait-ok/.test(longWait.data.output), 'shell waitMs beyond 20s waits to completion');
   const black = await cmd('shell', { command: 'node -e "1" ; del x' });
   assert(!black.ok && black.denied, 'blacklist denial');
   const outside = await cmd('fs_read', { path: 'c:\\Windows\\win.ini' });

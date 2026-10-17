@@ -80,7 +80,7 @@ const server = http.createServer(async (req, res) => {
       case '/read': {
         const start = Date.now();
         const offset = args.offset ?? 0;
-        const wait = Math.min(Math.max(args.waitMs || 0, 0), 20000);
+        const wait = Math.min(Math.max(args.waitMs || 0, 0), 60000);
         while (state.status === 'running' && state.outputBytes <= offset && Date.now() - start < wait) await sleep(50);
         return json(res, 200, readOutput(dir, state, offset, args.maxBytes));
       }

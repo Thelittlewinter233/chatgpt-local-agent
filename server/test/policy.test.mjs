@@ -40,7 +40,8 @@ test('checkCommand denies non-whitelisted heads when whitelist mode is on', () =
 });
 
 test('checkCommand enforces length limit', () => {
-  assert.throws(() => checkCommand(config, 'node ' + 'x'.repeat(5000), undefined), /4000/);
+  assert.throws(() => checkCommand(config, 'node ' + 'x'.repeat(17000), undefined), /16000/);
+  assert.doesNotThrow(() => checkCommand(config, 'node ' + 'x'.repeat(15000), undefined));
 });
 
 test('checkCommand skips whitelist when defaultAllow is on but keeps blacklist', () => {

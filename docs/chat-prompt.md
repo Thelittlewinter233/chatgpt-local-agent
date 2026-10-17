@@ -64,7 +64,7 @@
 | fs_mkdir | {path} | 创建目录 |
 | fs_info | {path} | 文件属性 |
 | fs_delete | {path} | 删除单个文件（确认模式下必弹确认条；完全批准模式直接执行） |
-| shell | {command, shell?, cwd?, mode?, waitMs?} | 在我的 Windows 上执行命令。shell 可选 powershell（默认）/powershell7/git-bash；mode 默认 wait（waitMs 最多 20000，超时返回 running 状态和 sessionId，命令不会被杀）；mode=detach 立即返回 sessionId。命令受白名单限制，被拒时返回 denied 和原因 |
+| shell | {command, shell?, cwd?, mode?, waitMs?} | 在我的 Windows 上执行命令。shell 可选 powershell（默认）/powershell7/git-bash；mode 默认 wait（waitMs 最多 60000，超时返回 running 状态和 sessionId，命令不会被杀）；mode=detach 立即返回 sessionId。命令受白名单限制，被拒时返回 denied 和原因 |
 | session_read | {sessionId, offset?, maxBytes?, waitMs?} | 读取后台命令/终端输出（用返回的 nextOffset 翻页） |
 | session_list | {} | 列出所有会话 |
 | session_close | {sessionId} | 结束一个会话进程树 |

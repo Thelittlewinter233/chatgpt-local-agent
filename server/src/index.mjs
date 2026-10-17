@@ -40,7 +40,7 @@ function computerInfo() {
     shells: Object.keys(config.shells),
     defaultCwd: config.defaultCwd,
     policyMode: config.policy?.defaultAllow ? 'blacklist-only' : 'whitelist',
-    limits: { maxActiveSessions: config.maxActiveSessions, waitMsMax: 20000, commandMaxLength: 4000 },
+    limits: { maxActiveSessions: config.maxActiveSessions, waitMsMax: 60000, commandMaxLength: 16000 },
     notes: [
       'File tools are restricted to allowedRoots; shell cwd must also be inside allowedRoots.',
       'shell runs as the current Windows user; whitelist gates command heads, blacklist always wins.',
@@ -78,7 +78,7 @@ async function runShell(args, ctx) {
     requestId: args.requestId
   });
   if (args.mode === 'detach') return { ...state, sessionId: state.id, detached: true };
-  const waitMs = Math.min(Math.max(Number(args.waitMs) || 5000, 0), 20000);
+  const waitMs = Math.min(Math.max(Number(args.waitMs) || 5000, 0), 60000);
   const end = Date.now() + waitMs;
   let result;
   do {

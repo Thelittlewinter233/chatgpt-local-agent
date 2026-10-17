@@ -212,9 +212,9 @@ function sendCmd(msg) {
     const timer = setTimeout(() => {
       if (pending.has(msgId)) {
         pending.delete(msgId);
-        resolve({ ok: false, error: 'agent server response timeout (120s)' });
+        resolve({ ok: false, error: 'agent server response timeout (300s)' });
       }
-    }, 120000);
+    }, 300000);
     pending.set(msgId, payload => { clearTimeout(timer); resolve(payload); });
     send({ type: 'cmd', msgId, hash8: msg.hash8, action: msg.action, args: msg.args || {} });
   });

@@ -163,8 +163,8 @@ async function checkCycle() {
   }
 }
 
-const RESULT_CHAR_LIMIT = 12000;
-const FIELD_CHAR_LIMIT = 9000;
+const RESULT_CHAR_LIMIT = 16000;
+const FIELD_CHAR_LIMIT = 12000;
 
 function buildResultBody(hash8, payload) {
   const hint = '输出被截断。shell/会话结果用 session_read {sessionId, offset} 续读（offset 用返回的 nextOffset）；文件用 fs_read {path, offsetBytes} 续读（offsetBytes 用返回的 nextOffset），或 tailBytes 读末尾。';
