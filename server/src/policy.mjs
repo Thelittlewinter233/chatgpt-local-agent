@@ -69,11 +69,11 @@ export function checkTerminalInput(config, input) {
   return { ok: true };
 }
 
-export function classifyCommand(config, command, cwd) {
+export function classifyCommand(config, command, cwd, bypassRoots) {
   const deny = reason => ({ kind: 'deny', reason });
   if (typeof command !== 'string' || !command.trim()) return deny('command is required');
   if (command.length > 16000) return deny('command exceeds 16000 characters');
-  try { checkPath(config, cwd || config.defaultCwd); }
+  try { checkPath(config, cwd || config.defaultCwd, bypassRoots); }
   catch (e) { return { kind: 'deny', reason: e.message }; }
   for (const re of DENY_PATTERNS) if (re.test(command)) return deny(`blacklisted pattern in command: ${re}`);
   const policy = config.policy || {};

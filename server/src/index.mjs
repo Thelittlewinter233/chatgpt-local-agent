@@ -51,7 +51,7 @@ function computerInfo() {
 }
 
 async function runShell(args, ctx) {
-  const verdict = classifyCommand(config, args.command, args.cwd);
+  const verdict = classifyCommand(config, args.command, args.cwd, ctx && ctx.bypassRoots);
   if (verdict.kind === 'deny') {
     const e = new Error(verdict.reason);
     e.denied = true;
@@ -101,9 +101,10 @@ async function dispatch(action, args, ctx) {
   } catch (e) {
     const msg = String((e && e.message) || e);
     const allowAllFs = config.policy?.allowOutOfRoots && action.startsWith('fs_');
+    const bypassEligible = FS_MUTATING.has(action) || allowAllFs || action === 'shell' || action === 'terminal_start';
     if (e && e.denied && /Path outside allowedRoots/.test(msg)
-      && (FS_MUTATING.has(action) || allowAllFs) && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
-      const target = clip(args.path || args.from || '', 200);
+      && bypassEligible && ctx && typeof ctx.requestConfirm === 'function' && !ctx.bypassRoots) {
+      const target = clip(args.path || args.from || args.cwd || '', 200);
       if (config.policy?.allowOutOfRoots) {
         bypassed = true;
         return await route(action, args, { ...ctx, bypassRoots: true });
@@ -179,6 +180,7 @@ async function route(action, args, ctx) {
     case 'session_list': return { sessions: await sessions.list() };
     case 'session_close': return sessions.request(args.sessionId, 'close');
     case 'terminal_start': {
+      checkPath(config, args.cwd || config.defaultCwd, ctx && ctx.bypassRoots);
       const state = await sessions.start({
         kind: 'terminal',
         shell: args.shell,

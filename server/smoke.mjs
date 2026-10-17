@@ -114,12 +114,16 @@ async function run() {
   assert(d2.ok && d2.data.deleted && confirms === 0, 'fs_delete is confirm-free in allow mode');
   const directShell = await cmd('shell', { command: 'Get-Date -Format o', waitMs: 10000 });
   assert(directShell.ok && confirms === 0, 'non-whitelisted shell is direct in allow mode (no confirm)');
+  const cwdShell = await cmd('shell', { command: 'node -v', cwd: path.dirname(config.allowedRoots[0]) });
+  assert(cwdShell.ok && cwdShell.data.exitCode === 0 && confirms === 0, 'out-of-roots shell cwd is direct in allow mode');
   const p2 = await setPolicyMode(false);
   assert(p2 && p2.allowOutOfRoots === false, 'policy hot-switch back to confirm mode');
   const w3 = await cmd('fs_write', { path: outsideWrite, content: 'c' });
   assert(w3.ok && confirms === 1, 'out-of-roots write requires confirm again after switching back');
   const delOut = await cmd('fs_delete', { path: outsideWrite });
   assert(delOut.ok && delOut.data.deleted && confirms === 2, 'fs_delete requires confirm again after switching back');
+  const cwdConfirm = await cmd('shell', { command: 'node -v', cwd: path.dirname(config.allowedRoots[0]) });
+  assert(cwdConfirm.ok && confirms === 3, 'out-of-roots shell cwd goes through confirm bar in confirm mode');
   const term = await cmd('terminal_start', { shell: 'powershell' });
   assert(term.ok && term.data.sessionId, 'terminal_start returns sessionId');
   const tid = term.data.sessionId;
