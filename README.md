@@ -41,16 +41,83 @@
 │   └── popup/                 # 配对 Token、暂停、自动发送、心跳诊断
 └── docs/
     ├── chat-prompt.md         # 协议模板完整版（新会话首条粘贴）
-    └── custom-instructions.md # 自定义指令精简版（长期生效）
+    ├── custom-instructions.md # 自定义指令精简版（长期生效）
+    └── install-prompt.md      # 快速安装提示词（复制给你电脑上的 AI Agent）
 ```
 
-## 快速开始
+## 零门槛安装（推荐）：把安装交给你的 AI Agent
 
-1. **启动服务**：双击 `start.bat`（或 `cd server && npm run start`）。看到 `ws server listening on ws://127.0.0.1:9752` 即成功，token 已写入 `server/config.local.json`
-2. **装扩展**：Chrome 进 `chrome://extensions` → 开发者模式 → 加载解压缩的扩展程序 → 选 `extension` 文件夹
-3. **配对**：点扩展图标 → 粘贴 `config.local.json` 里的 `token` → 保存并测试连接 → 显示"已连接本地服务"
-4. **给 AI 协议**：新会话粘贴 `docs/chat-prompt.md` 分割线内内容（或按其说明配好自定义指令长期生效）
-5. **下任务**：如"在 tmp 下创建 hello.txt 内容为 hi，然后读回来确认"
+复制 [docs/install-prompt.md](docs/install-prompt.md) 里的整段提示词，粘贴给你电脑上的任意编程 Agent（Trae / Cursor / Claude Code / Windsurf…），它会自动完成：克隆仓库 → 检查 Node ≥ 22 → npm install → 启动服务 → 读取配对 token，最后列出你在浏览器里要做的 3 步（装扩展 / 配对 / 注入协议）和一条验证任务。全程约 3 分钟。
+
+## 安装教程（手动版）
+
+### 第 0 步：准备环境
+
+| 需要 | 版本/说明 | 检查方式 |
+|---|---|---|
+| Node.js | **≥ 22**（含 npm） | 终端执行 `node -v`，输出 `v22.x` 及以上即可；没有就去 [nodejs.org](https://nodejs.org) 装 LTS |
+| 浏览器 | Chrome / Edge（其他 Chromium 亦可），Firefox 109+ 见[浏览器支持](#浏览器支持) | — |
+| 磁盘位置 | 建议放在**非系统盘、路径不含空格**的目录，如 `D:\agent-bridge` | — |
+
+### 第 1 步：获取代码
+
+二选一：
+
+```powershell
+git clone https://github.com/Thelittlewinter233/chatgpt-local-agent.git D:\agent-bridge
+```
+
+或者浏览器打开仓库页面 → Code → Download ZIP → 解压（解压后目录名带 `-main` 后缀，不影响使用）。
+
+### 第 2 步：启动服务（生成配对 token）
+
+双击仓库根目录的 **`start.bat`**，或手动：
+
+```powershell
+cd D:\agent-bridge\server
+npm install     # 首次需要；国内网络慢可先 npm config set registry https://registry.npmmirror.com
+npm run start
+```
+
+- 成功标志：终端出现 `ws server listening on ws://127.0.0.1:9752`
+- 同时 `server/config.local.json` 自动生成，里面的 `token` 字段就是配对令牌（**64 位随机值，勿外传**）
+- 关闭服务：在服务窗口按 `Ctrl+C` 或直接关窗口；下次再点 `start.bat` 即可
+- 可选：PowerShell 运行 `scripts/install-autostart.ps1` 设为登录自启（隐藏窗口 + 崩溃自动重启），`-Remove` 卸载
+
+### 第 3 步：安装浏览器扩展
+
+1. 打开 `chrome://extensions`（Edge 地址栏输入 `edge://extensions`）
+2. 打开右上角（Edge 是左侧）的**开发者模式**开关
+3. 点**加载已解压的扩展程序**，选中仓库里的 **`extension`** 文件夹（注意：选的是含 `manifest.json` 的那个目录）
+4. 成功后工具栏出现 **Agent Bridge** 图标（蓝绿渐变 AB）
+
+### 第 4 步：配对
+
+1. 用记事本/VS Code 打开 `server/config.local.json`，复制 `token` 的值
+2. 点浏览器工具栏的 Agent Bridge 图标
+3. 粘贴 token → 点**保存并测试连接**
+4. 成功标志：popup 显示"已连接本地服务"，图标角标变绿 ✓（黄色 `?`=没配对，红色 `!`=服务没启动）
+
+### 第 5 步：验证闭环
+
+1. 打开 [chatgpt.com](https://chatgpt.com)（或 chatglm.cn / chat.deepseek.com / www.kimi.com / chat.qwen.ai 任一），随便进一个对话
+2. 按 **Alt+P** 注入协议（或手动粘贴 `docs/chat-prompt.md` 分割线内内容）
+3. 补一句任务后发送，推荐第一条验证任务：
+
+   > 在 tmp 目录创建 hello.txt 内容为 hi，然后读回来确认
+
+4. 全链路成功标志：AI 输出 `agent` 代码块 → 右下角 toast"执行 fs_write"→ 结果块自动回填发送 → AI 继续直到输出 done → toast"任务完成"
+
+### 安装常见问题
+
+| 现象 | 处理 |
+|---|---|
+| `npm install` 卡住/超时 | 换国内镜像：`npm config set registry https://registry.npmmirror.com` 后重试 |
+| `npm install` 报 node-pty 错误 | 确认 Node 是 ≥22 的 LTS 完整安装（含构建工具选项）；把完整报错发到 issue |
+| 双击 start.bat 窗口一闪而过 | 先在终端里手动 `npm run start` 看真实报错；多半是 Node 版本低于 22 |
+| 扩展加载报错"Manifest file is missing" | 选错目录了，要选 `extension` 子文件夹 |
+| popup 一直黄 `?` | token 没保存成功；重新粘贴后点保存 |
+| popup 红 `!` | 服务没在运行；先跑 start.bat |
 
 ## 浏览器支持
 
@@ -127,7 +194,7 @@ AI 只需要会一件事：输出如下代码块，然后停下等结果。
 
 - 协议模板通用：任何站点新会话粘贴同一份 [docs/chat-prompt.md](docs/chat-prompt.md)，或直接 Alt+P 注入
 - 每个站点的去重记忆独立，互不干扰；但**步数计数全局共享**——换站点连跑大任务时留意 popup 进度
-- "启发式首版"的站点（DeepSeek/Kimi/豆包/通义千问）如回填或发送不灵，按[故障排查](#故障排查)抓 DOM 信息反馈迭代
+- "启发式首版"的站点（DeepSeek/Kimi/豆包）如回填或发送不灵，按[故障排查](#故障排查)抓 DOM 信息反馈迭代；Qwen（chat.qwen.ai）已实测可用
 
 ### 5.55 站点域名自适应（站点改名换域免修扩展）
 
@@ -161,8 +228,9 @@ AI 站点经常改名换域名（如 tongyi.com → qianwen.com），manifest �
 | `port` | WS 服务端口，默认 9752 |
 | `allowedRoots` | 文件工具允许的根目录（也是 shell 的 cwd 允许范围） |
 | `policy.whitelist` | 白名单命令头（git/node/python…），命中直接执行 |
-| `policy.confirmUnknown` | `true`（默认）：白名单外命令弹**页内确认条**（显示完整命令，60 秒倒计时）；`false` 直接拒绝 |
+| `policy.confirmUnknown` | `true`（默认）：白名单外命令弹**页内确认条**（显示完整命令，永久等待用户选择，不自动拒绝）；`false` 直接拒绝 |
 | `policy.defaultAllow` | `true` 时关闭白名单（黑名单仍然生效），不建议 |
+| `policy.allowOutOfRoots` | **完全批准模式**：`true` 时白名单外的文件写入/编辑/移动/删除直接执行（popup 可随时开关），`false` 时越界操作弹确认条放行 |
 | `policy.blacklist`（内置） | format X:、shutdown、taskkill、reg、net、Remove-Item、del/rd/rm 等，任何配置下硬拒 |
 | `shells` | 可用的 shell 及路径（powershell / powershell7 / git-bash） |
 | `maxActiveSessions` / `maxOutputBytes` | 后台会话数量与输出轮转上限 |
@@ -255,7 +323,7 @@ window.__abYoursiteAdapter = window.__abMakeHeuristicAdapter({
 ```powershell
 cd server
 npm install
-npm test        # 21 个单元/集成测试（含真实 PowerShell 会话与 PTY 交互终端）
+npm test        # 28 个单元/集成测试（含真实 PowerShell 会话与 PTY 交互终端）
 npm run start   # 启动服务
 node smoke.mjs  # 无扩展全链路自测（需服务已启动）
 ```
