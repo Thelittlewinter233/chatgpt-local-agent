@@ -49,13 +49,19 @@ function cleanHeader(text) {
 }
 
 function codeBodyIfAgent(pre) {
-  const code = pre.querySelector('code, span');
-  if (!code) return null;
-  const body = (code.textContent || '').trim();
-  if (!body) return null;
-  const tokens = [...(code.classList || [])];
   const header = cleanHeader(pre.querySelector('div, header, span')?.textContent);
-  if (tokens.includes('language-agent') || header === 'agent' || body.startsWith('{"action"')) return body;
+  const candidates = [
+    ...pre.querySelectorAll('code'),
+    ...pre.querySelectorAll('[class*="code-body" i]'),
+    ...pre.querySelectorAll('span')
+  ];
+  for (const code of candidates) {
+    const body = (code.textContent || '').trim();
+    if (!body) continue;
+    const tokens = [...(code.classList || [])];
+    const isCodeEl = code.tagName === 'CODE';
+    if (tokens.includes('language-agent') || body.startsWith('{"action"') || (isCodeEl && header === 'agent')) return body;
+  }
   return null;
 }
 
