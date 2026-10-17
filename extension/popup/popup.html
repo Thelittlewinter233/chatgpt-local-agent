@@ -41,6 +41,12 @@
     <button id="reset">新任务（重置计数与熔断）</button>
     <button id="testConfirm">测试确认条 UI</button>
   </div>
+  <div class="opts">
+    <label style="margin-top:0">站点域名自适应（站点改域名后免改 manifest）</label>
+    <button id="probeDomains">检测站点域名跳转</button>
+    <div class="row"><input id="extraDomain" type="text" placeholder="手动加域名，如 chat.qwen.ai" style="flex:1;font:12px/18px monospace;padding:6px 8px;border:1px solid #d1d5db;border-radius:6px;box-sizing:border-box"><button id="addDomain" style="margin:0">添加</button></div>
+    <div id="domainState" class="dbg"></div>
+  </div>
   <script src="popup.js"></script>
 </body>
 </html>

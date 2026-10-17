@@ -128,5 +128,41 @@ $('testConfirm').addEventListener('click', async () => {
     : '失败：' + ((res && res.error) || '未知');
 });
 
+async function refreshDomains() {
+  const o = await chrome.storage.local.get(['ab_extra_domains', 'ab_domain_probe']);
+  const extras = o.ab_extra_domains || [];
+  const p = o.ab_domain_probe;
+  let txt = '已追加域名：' + (extras.length ? extras.join(', ') : '无');
+  if (p && p.at) {
+    const age = Math.round((Date.now() - p.at) / 60000);
+    txt += ' · 上次检测 ' + (age < 1 ? '刚刚' : age + ' 分钟前');
+  }
+  $('domainState').textContent = txt;
+}
+
+$('probeDomains').addEventListener('click', async () => {
+  $('domainState').textContent = '正在逐站探测（后台短暂开标签页，最长约 2 分钟）…';
+  const res = await chrome.runtime.sendMessage({ type: 'probe-site-domains' }).catch(e => ({ ok: false, error: String(e) }));
+  if (res && res.ok) {
+    const moved = res.report.results.filter(r => r.moved);
+    $('domainState').textContent = '检测完成：' + (moved.length
+      ? moved.map(r => r.id + ' 已迁移到 ' + r.final + '，已自动适配').join('；')
+      : '所有站点域名未变');
+  } else {
+    $('domainState').textContent = '检测失败：' + ((res && res.error) || '未知');
+  }
+  refreshDomains();
+});
+
+$('addDomain').addEventListener('click', async () => {
+  const host = $('extraDomain').value.trim();
+  if (!host) return;
+  const res = await chrome.runtime.sendMessage({ type: 'add-site-domain', host }).catch(e => ({ ok: false, error: String(e) }));
+  $('extraDomain').value = '';
+  $('err').textContent = res && res.ok ? '已添加域名并注入脚本：' + res.host : '失败：' + ((res && res.error) || '未知');
+  refreshDomains();
+});
+
+refreshDomains();
 refresh();
 setInterval(refresh, 2000);

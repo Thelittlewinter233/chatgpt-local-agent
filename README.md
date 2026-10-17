@@ -34,10 +34,10 @@
 │   │   ├── deepseek.js        # chat.deepseek.com（启发式首版）
 │   │   ├── kimi.js            # kimi.com / kimi.moonshot.cn（启发式首版）
 │   │   ├── doubao.js          # doubao.com 豆包（启发式首版）
-│   │   ├── qwen.js            # qianwen.com 千问（原 tongyi.com，已实测 DOM）/ tongyi.aliyun.com
+│   │   ├── qwen.js            # chat.qwen.ai Qwen Chat（已实测 DOM）/ qianwen.com 千问 / tongyi.aliyun.com
 │   │   └── registry.js        # 按 location.hostname 选择适配器
 │   ├── content.js             # 站点无关主循环：检测/去重/回填/发送/确认条
-│   ├── background.js          # WS 状态机/重连/结果重放/多标签仲裁
+│   ├── background.js          # WS 状态机/重连/结果重放/多标签仲裁/域名自适应
 │   └── popup/                 # 配对 Token、暂停、自动发送、心跳诊断
 └── docs/
     ├── chat-prompt.md         # 协议模板完整版（新会话首条粘贴）
@@ -128,6 +128,16 @@ AI 只需要会一件事：输出如下代码块，然后停下等结果。
 - 协议模板通用：任何站点新会话粘贴同一份 [docs/chat-prompt.md](docs/chat-prompt.md)，或直接 Alt+P 注入
 - 每个站点的去重记忆独立，互不干扰；但**步数计数全局共享**——换站点连跑大任务时留意 popup 进度
 - "启发式首版"的站点（DeepSeek/Kimi/豆包/通义千问）如回填或发送不灵，按[故障排查](#故障排查)抓 DOM 信息反馈迭代
+
+### 5.55 站点域名自适应（站点改名换域免修扩展）
+
+AI 站点经常改名换域名（如 tongyi.com → qianwen.com），manifest 静态 matches 无法运行时修改，本项目用三层机制根治：
+
+1. **动态脚本注册**：扩展启动时用 `chrome.scripting.registerContentScripts` 把同一组 content scripts 动态注册到"站点清单 + 追加域名"中**未被 manifest 静态覆盖**的域名，与静态注入自动去重、绝不双注入
+2. **一键跳转探测**：popup 底部"检测站点域名跳转"——后台逐站打开入口页（不激活、探测完自动关闭），抓最终落地域名；发现迁移（如 tongyi.com → qianwen.com）自动追加并动态注入，结果持久化
+3. **手动添加域名**：popup 输入框直接填 `chat.qwen.ai` 这样的新域名，回车后自动申请主机权限并注入（遇到全新品牌域名时走此路径）
+
+站点清单在 [extension/sites.js](extension/sites.js)，新增站点时同步维护 entry 即可。
 
 ### 5.6 进阶：用站点自带的"智能体"彻底免注入（零代码替代方案）
 

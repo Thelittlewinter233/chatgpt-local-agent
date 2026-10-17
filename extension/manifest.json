@@ -3,7 +3,19 @@
   "name": "ChatGPT Local Agent Bridge",
   "version": "0.1.0",
   "description": "把 chatgpt.com 回复中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
-  "permissions": ["storage"],
+  "permissions": ["storage", "scripting", "tabs"],
+  "host_permissions": [
+    "*://*.chatgpt.com/*",
+    "*://*.chatglm.cn/*",
+    "*://*.deepseek.com/*",
+    "*://*.kimi.com/*",
+    "*://*.moonshot.cn/*",
+    "*://*.doubao.com/*",
+    "*://*.qwen.ai/*",
+    "*://*.qianwen.com/*",
+    "*://*.tongyi.com/*",
+    "https://tongyi.aliyun.com/*"
+  ],
   "background": { "service_worker": "background.js" },
   "icons": {
     "16": "icons/icon-16.png",
@@ -23,7 +35,8 @@
         "https://tongyi.aliyun.com/*",
         "https://www.tongyi.com/*",
         "https://qianwen.com/*",
-        "https://www.qianwen.com/*"
+        "https://www.qianwen.com/*",
+        "https://chat.qwen.ai/*"
       ],
       "js": [
         "adapters/heuristic.js",

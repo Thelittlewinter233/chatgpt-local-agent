@@ -1,3 +1,5 @@
+if (typeof importScripts === 'function') importScripts('sites.js');
+
 let ws = null;
 let authed = false;
 let helloTimer = null;
@@ -364,6 +366,22 @@ chrome.runtime.onMessage.addListener((msg, sender, sendResponse) => {
     })();
     return true;
   }
+  if (msg.type === 'probe-site-domains') {
+    probeSiteDomains().then(r => sendResponse({ ok: true, report: r })).catch(e => sendResponse({ ok: false, error: String(e && e.message || e) }));
+    return true;
+  }
+  if (msg.type === 'add-site-domain') {
+    (async () => {
+      try {
+        if (chrome.permissions && chrome.permissions.request) {
+          await chrome.permissions.request({ origins: ['https://' + String(msg.host || '').trim().toLowerCase() + '/*'] }).catch(() => { });
+        }
+      } catch { }
+      const r = await addSiteDomain(msg.host);
+      sendResponse(r);
+    })();
+    return true;
+  }
   if (msg.type === 'wake') {
     connect();
     sendResponse({ ok: true });
@@ -393,5 +411,118 @@ chrome.tabs.onRemoved.addListener(async tabId => {
   }
   if (contentTabId === tabId) contentTabId = null;
 });
+
+const staticMatches = () => (chrome.runtime.getManifest().content_scripts || []).flatMap(cs => cs.matches || []);
+
+async function dynamicSiteMatches() {
+  const staticMs = staticMatches();
+  const dyn = [];
+  for (const s of (typeof __AB_SITE_ENTRIES !== 'undefined' ? __AB_SITE_ENTRIES : [])) {
+    try { dyn.push(new URL(s.entry).origin + '/*'); } catch { }
+  }
+  const o = await getStore('ab_extra_domains');
+  for (const d of (o.ab_extra_domains || [])) {
+    const h = String(d || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+    if (/^[a-z0-9.-]+$/.test(h)) dyn.push('https://' + h + '/*');
+  }
+  return [...new Set(dyn)].filter(m => !staticMs.includes(m));
+}
+
+async function syncDynamicScripts() {
+  if (!chrome.scripting || !chrome.scripting.registerContentScripts) return;
+  try {
+    const matches = await dynamicSiteMatches();
+    const registered = await chrome.scripting.getRegisteredContentScripts();
+    const cur = registered.find(s => s.id === 'ab-dynamic');
+    const same = cur && JSON.stringify([...(cur.matches || [])].sort()) === JSON.stringify([...matches].sort());
+    if (same) return;
+    if (cur) await chrome.scripting.unregisterContentScripts({ ids: ['ab-dynamic'] });
+    if (matches.length) {
+      const cs = chrome.runtime.getManifest().content_scripts[0];
+      await chrome.scripting.registerContentScripts({ id: 'ab-dynamic', matches, js: cs.js, runAt: 'document_idle', persistAcrossSessions: true });
+    }
+    console.log('[AgentBridge] dynamic content scripts synced:', matches.join(' '));
+  } catch (e) {
+    console.log('[AgentBridge] dynamic scripts sync failed:', e && e.message || e);
+  }
+}
+
+function probeOne(entry) {
+  return new Promise(resolve => {
+    let tabId = null;
+    let done = false;
+    const timer = setTimeout(finish, 15000);
+    function cleanup() {
+      clearTimeout(timer);
+      chrome.tabs.onUpdated.removeListener(onUpdated);
+      chrome.tabs.onRemoved.removeListener(onRemoved);
+    }
+    function finish() {
+      if (done) return;
+      done = true;
+      cleanup();
+      if (tabId != null) chrome.tabs.remove(tabId).catch(() => { });
+      resolve(null);
+    }
+    function grab() {
+      chrome.tabs.get(tabId).then(t => {
+        if (done) return;
+        if (t.url && /^https:/i.test(t.url) && t.status === 'complete') {
+          done = true;
+          cleanup();
+          chrome.tabs.remove(tabId).catch(() => { });
+          try { resolve(new URL(t.url).hostname); } catch { resolve(null); }
+        }
+      }).catch(() => { });
+    }
+    function onUpdated(id, info) { if (id === tabId && info.status === 'complete') setTimeout(grab, 800); }
+    function onRemoved(id) { if (id === tabId && !done) { done = true; cleanup(); resolve(null); } }
+    chrome.tabs.onUpdated.addListener(onUpdated);
+    chrome.tabs.onRemoved.addListener(onRemoved);
+    chrome.tabs.create({ url: entry, active: false }).then(t => { tabId = t.id; }).catch(() => finish());
+  });
+}
+
+async function probeSiteDomains() {
+  const staticMs = staticMatches();
+  const results = [];
+  const added = [];
+  for (const s of (typeof __AB_SITE_ENTRIES !== 'undefined' ? __AB_SITE_ENTRIES : [])) {
+    let entryHost = '';
+    try { entryHost = new URL(s.entry).hostname; } catch { }
+    const finalHost = await probeOne(s.entry);
+    let moved = false;
+    if (finalHost && finalHost !== entryHost) {
+      moved = !staticMs.includes('https://' + finalHost + '/*');
+      const o = await getStore('ab_extra_domains');
+      const extras = o.ab_extra_domains || [];
+      if (!extras.includes(finalHost)) {
+        extras.push(finalHost);
+        await chrome.storage.local.set({ ab_extra_domains: extras });
+        added.push(s.id + ' → ' + finalHost);
+      }
+    }
+    results.push({ id: s.id, entry: entryHost, final: finalHost || entryHost + '（探测超时）', moved });
+  }
+  await syncDynamicScripts();
+  const report = { at: Date.now(), results, added };
+  await chrome.storage.local.set({ ab_domain_probe: report });
+  return report;
+}
+
+async function addSiteDomain(host) {
+  const h = String(host || '').trim().toLowerCase().replace(/^https?:\/\//, '').replace(/\/.*$/, '');
+  if (!/^[a-z0-9.-]+\.[a-z]{2,}$/.test(h)) return { ok: false, error: '域名格式无效：' + host };
+  const o = await getStore('ab_extra_domains');
+  const extras = o.ab_extra_domains || [];
+  if (!extras.includes(h)) {
+    extras.push(h);
+    await chrome.storage.local.set({ ab_extra_domains: extras });
+  }
+  await syncDynamicScripts();
+  return { ok: true, host: h };
+}
+
+syncDynamicScripts();
 
 connect();
