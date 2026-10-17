@@ -108,6 +108,8 @@ async function run() {
   assert(rOut.ok && rOut.data.content === 'b', 'out-of-roots read is direct in allow mode (no confirm)');
   const d2 = await cmd('fs_delete', { path: outsideWrite });
   assert(d2.ok && d2.data.deleted && confirms === 0, 'fs_delete is confirm-free in allow mode');
+  const directShell = await cmd('shell', { command: 'Get-Date -Format o', waitMs: 10000 });
+  assert(directShell.ok && confirms === 0, 'non-whitelisted shell is direct in allow mode (no confirm)');
   const p2 = await setPolicyMode(false);
   assert(p2 && p2.allowOutOfRoots === false, 'policy hot-switch back to confirm mode');
   const w3 = await cmd('fs_write', { path: outsideWrite, content: 'c' });

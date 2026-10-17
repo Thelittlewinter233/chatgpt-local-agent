@@ -57,7 +57,7 @@ async function runShell(args, ctx) {
     e.denied = true;
     throw e;
   }
-  if (verdict.kind === 'confirm') {
+  if (verdict.kind === 'confirm' && !config.policy?.allowOutOfRoots) {
     const preview = `shell [${verdict.head}] ${String(args.command).slice(0, 160)}`;
     let approved = false;
     try { if (ctx && ctx.requestConfirm) approved = await ctx.requestConfirm(preview); }
