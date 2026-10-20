@@ -1,4 +1,4 @@
-﻿import fs from 'node:fs';
+import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { checkPathResolved as checkPath } from './policy.mjs';
@@ -29,13 +29,17 @@ function globToRegex(pattern) {
   return new RegExp(`^${escaped}$`, 'i');
 }
 
-function atomicWrite(file, before, buffer) {
-  const target = fs.realpathSync(file);
-  const temp = `${target}.agent-${process.pid}.tmp`;
+function atomicWrite(config, file, before, buffer, bypassRoots) {
+  const target = checkPath(config, file, bypassRoots);
+  const realTarget = fs.realpathSync(target);
+  if (!bypassRoots && realTarget.toLowerCase() !== target.toLowerCase()) {
+    checkPath(config, realTarget, false);
+  }
+  const temp = `${realTarget}.agent-${process.pid}.tmp`;
   try {
-    fs.writeFileSync(temp, buffer, { mode: fs.statSync(target).mode });
-    if (hash(fs.readFileSync(target)) !== hash(before)) throw new Error('File changed during edit; retry after reading');
-    replaceFile(temp, target);
+    fs.writeFileSync(temp, buffer, { mode: fs.statSync(realTarget).mode });
+    if (hash(fs.readFileSync(realTarget)) !== hash(before)) throw new Error('File changed during edit; retry after reading');
+    replaceFile(temp, realTarget);
   } finally { if (fs.existsSync(temp)) fs.unlinkSync(temp); }
 }
 
@@ -87,7 +91,8 @@ export function createFsTools(config) {
   }
 
   async function edit(args, ctx) {
-    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    const bypass = !!(ctx && ctx.bypassRoots);
+    const file = checkPath(config, args.path, bypass);
     if (typeof args.oldText !== 'string' || !args.oldText) throw new Error('oldText must be a non-empty string');
     if (typeof args.newText !== 'string') throw new Error('newText must be a string');
     const before = fs.readFileSync(file);
@@ -97,12 +102,13 @@ export function createFsTools(config) {
     const count = text.split(args.oldText).length - 1;
     if (count !== expected) throw new Error(`Expected ${expected} occurrences, found ${count}; file unchanged`);
     const after = Buffer.from(text.split(args.oldText).join(args.newText), 'utf8');
-    atomicWrite(file, before, after);
+    atomicWrite(config, file, before, after, bypass);
     return { path: fs.realpathSync(file), replacements: count, sha256: hash(after) };
   }
 
   async function editMulti(args, ctx) {
-    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    const bypass = !!(ctx && ctx.bypassRoots);
+    const file = checkPath(config, args.path, bypass);
     if (!Array.isArray(args.edits) || !args.edits.length) throw new Error('edits must be a non-empty array');
     if (args.edits.length > 20) throw new Error('too many edits in one call (max 20)');
     const before = fs.readFileSync(file);
@@ -120,7 +126,7 @@ export function createFsTools(config) {
       replacements += count;
     }
     const after = Buffer.from(text, 'utf8');
-    atomicWrite(file, before, after);
+    atomicWrite(config, file, before, after, bypass);
     return { path: fs.realpathSync(file), edits: args.edits.length, replacements, sha256: hash(after) };
   }
 

@@ -16,7 +16,21 @@ const config = loadConfig();
 const sessions = new Sessions(config);
 const fsTools = createFsTools(config);
 
-const log = (...parts) => console.log(new Date().toISOString(), ...parts);
+const wsLogPath = path.join(config.runtime, 'ws.log');
+try {
+  fs.mkdirSync(config.runtime, { recursive: true });
+  const st = fs.statSync(wsLogPath);
+  if (st.size > 5 * 1024 * 1024) fs.renameSync(wsLogPath, wsLogPath + '.1');
+} catch { }
+
+const log = (...parts) => {
+  const stamp = new Date().toISOString();
+  console.log(stamp, ...parts);
+  try {
+    const line = parts.map(p => typeof p === 'string' ? p : String(p && typeof p === 'object' ? JSON.stringify(p) : p)).join(' ');
+    fs.appendFileSync(wsLogPath, `${stamp} ${line}\n`);
+  } catch { }
+};
 
 function audit(event) {
   try {

@@ -37,8 +37,8 @@
 │   │   ├── qwen.js            # chat.qwen.ai Qwen Chat（已实测 DOM）/ qianwen.com 千问 / tongyi.aliyun.com
 │   │   └── registry.js        # 按 location.hostname 选择适配器
 │   ├── content.js             # 站点无关主循环：检测/去重/回填/发送/确认条
-│   ├── background.js          # WS 状态机/重连/结果重放/多标签仲裁/域名自适应
-│   └── popup/                 # 配对 Token、暂停、自动发送、心跳诊断
+│   ├── background.js          # WS 状态机/重连/结果重放/per-tab 会话/域名自适应
+│   └── popup/                 # 配对 Token、暂停、自动发送、心跳诊断、keepalive 状态与事件时间线
 └── docs/
     ├── chat-prompt.md         # 协议模板完整版（新会话首条粘贴）
     ├── custom-instructions.md # 自定义指令精简版（长期生效）
@@ -159,12 +159,13 @@ Firefox 注意事项：
 
 ### 5.2 日常使用
 
-- **新会话免粘贴**：在任意支持的 AI 网页里按 **Alt+P**，协议自动填入输入框（或点扩展 popup 的"注入协议到任务标签"）；补一句你的任务后回车即可。协议文本内置在扩展的 `extension/assets/chat-prompt.txt`，想改内容直接编辑该文件后重载扩展
+- **新会话免粘贴**：在任意支持的 AI 网页里按 **Alt+P**，协议自动填入输入框（或点扩展 popup 的"注入协议到当前标签"）；补一句你的任务后回车即可。协议文本内置在扩展的 `extension/assets/chat-prompt.txt`，想改内容直接编辑该文件后重载扩展
 - **启动**：`start.bat`；关闭：服务终端 Ctrl + C 或关窗口（后台会话进程不受影响，重开后 `session_list` 可找回）
 - **登录自启**（可选）：PowerShell 运行 `scripts/install-autostart.ps1`（隐藏窗口 + 崩溃自动重启），`-Remove` 卸载
 - **多任务连发**：任务正常结束时 AI 会输出 `done`，计数自动清零，同会话可直接下下一个任务；只有步数耗尽/熔断时才需要点 popup 的"新任务"
 - **急刹车**：popup"暂停监听"立即停；关闭"自动发送"变为填入待你手动回车
-- **多标签页**：第一个打开的 AI 网页标签自动成为"任务标签"，其他标签左下角显示"点击接管"；确认条只弹在任务标签
+- **多标签页**：每个 AI 网页标签都是独立会话（各自一条 WS、各自检测/回填/发送），可以同时跑多个任务互不干扰；确认条只弹在发起该命令的那个标签
+- **最小化后台跑**：每个标签自己持有一条 keep-alive WebSocket 到本地服务，用来豁免 Chrome 对隐藏标签的定时器节流与页面冻结；popup 顶部的 keepalive 行和事件时间线可以确认它是否连上
 
 ### 5.3 协议一览
 
@@ -320,7 +321,7 @@ window.__abYoursiteAdapter = window.__abMakeHeuristicAdapter({
 | 心跳显示"无心跳" | 目标站点标签页没刷新（改扩展代码后必须 F5） |
 | AI 不输出 agent 块 | 把协议模板发它，或回复"按 agent 协议执行" |
 | `no-agent-block-on-page` 持续 | 站点改版：按上文调试清单抓 DOM，改对应适配器 |
-| 回填成功但不发送 | popup 心跳应显示 `send-ok · …`；若 `send-failed`，抓发送按钮特征 |
+| 回填成功但不发送 | popup 心跳应显示 `send-done · …`；若 `send-failed`，抓发送按钮特征 |
 | 命令被拒绝 | AI 会返回命令名，加进 `policy.whitelist` 重启服务；或走页内确认 |
 | 中文乱码 | 保持默认 PowerShell（脚本已强制 UTF-8 + BOM） |
 
@@ -329,7 +330,7 @@ window.__abYoursiteAdapter = window.__abMakeHeuristicAdapter({
 ```powershell
 cd server
 npm install
-npm test        # 28 个单元/集成测试（含真实 PowerShell 会话与 PTY 交互终端）
+npm test        # 36 个单元/集成测试（含真实 PowerShell 会话与 PTY、keepalive、多会话）
 npm run start   # 启动服务
 node smoke.mjs  # 无扩展全链路自测（需服务已启动）
 ```
@@ -339,3 +340,7 @@ node smoke.mjs  # 无扩展全链路自测（需服务已启动）
 ## 安全须知
 
 本工具把"当前 Windows 用户权限的文件与 shell"暴露给 AI 对话，等于把执行权交给模型输出。请：保持默认白名单 + 页内确认；不要把 `allowedRoots` 开到盘根；token 不要外传；在不可信对话里用 popup 暂停监听。详细威胁模型见上游项目 [chat-local-agent-mcp](https://github.com/AblazeGHR/chat-local-agent-mcp) 的 SECURITY 思路（本项目引擎 vendored 自它，MIT）。
+
+### Dedicated Agent Chrome launcher
+
+Double-click `start-agent-chrome.bat` to launch a separate Chrome profile with background throttling disabled (no pages are opened automatically; start any AI site yourself). On the first run, open `chrome://extensions`, enable Developer mode, and load the project `extension/` directory in this Chrome instance. Paste the same server token used by the main Chrome instance into the extension popup; the server token does not change. Keep this Chrome instance running for full-speed background work; the popup small-window button is not needed here. The profile is stored at `%LOCALAPPDATA%\ChromeAgentProfile`.

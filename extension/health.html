@@ -18,8 +18,8 @@
 </head>
 <body>
   <h1>AgentBridge 选择器健康自检</h1>
-  <div class="sub">检测当前任务标签页的适配器命中情况。先在某个 AI 网页标签页里完成扩展刷新（F5），再回到本页点击检测。</div>
-  <button id="check">检测任务标签页</button>
+  <div class="sub">检测当前活动标签页的适配器命中情况。先在某个 AI 网页标签页里完成扩展刷新（F5），再回到本页点击检测。</div>
+  <button id="check">检测活动标签页</button>
   <span id="state"></span>
   <pre id="out">尚未检测。</pre>
 
@@ -51,7 +51,6 @@
     <tr><td>no-agent-block-on-page</td><td>代码块未识别：调 codeBodyIfAgent 的 class/头部判定</td></tr>
     <tr><td>fill-failed</td><td>输入框未找到或写入失败：调 findInput/insertText</td></tr>
     <tr><td>send-failed</td><td>按钮与回车均未生效：调 sendSelectors</td></tr>
-    <tr><td>not-leader-tab</td><td>该标签非任务标签：点击左下角胶囊接管</td></tr>
     <tr><td>block-already-seen</td><td>块已处理过：点 popup"新任务"清空去重记忆</td></tr>
   </table>
 

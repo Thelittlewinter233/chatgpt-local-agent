@@ -15,7 +15,11 @@
     button:hover { background: #e5e7eb; }
     .err { min-height: 18px; margin: 6px 0; color: #b45309; word-break: break-all; }
     .dbg { min-height: 16px; margin: 0 0 4px; color: #6b7280; font-size: 11px; word-break: break-all; }
+    .tl { margin: 2px 0 4px; color: #6b7280; font: 11px/15px monospace; white-space: pre-line; word-break: break-all; }
     .opts { margin-top: 10px; border-top: 1px solid #e5e7eb; padding-top: 6px; }
+    .diagHead { display: flex; align-items: center; justify-content: space-between; cursor: pointer; color: #374151; font-size: 12px; user-select: none; }
+    .diagHead:hover { color: #111827; }
+    .diagHead .arrow { font-size: 10px; }
   </style>
 </head>
 <body>
@@ -24,10 +28,21 @@
   <div id="err" class="err"></div>
   <div id="dbg" class="dbg"></div>
   <div id="guard" class="dbg"></div>
+  <div class="opts">
+    <div id="diagHead" class="diagHead"><span>诊断详情（keepalive / 驱动日志 / 时间线）</span><span id="diagArrow" class="arrow">▸</span></div>
+    <div id="diagBody" style="display:none">
+      <div class="row"><span id="kaDot" class="dot"></span><span id="kaState" class="dbg" style="margin:0;flex:1">keepalive：…</span></div>
+      <div id="driveLog" class="tl"></div>
+      <div id="kaTimeline" class="tl"></div>
+      <div id="bgState" class="tl"></div>
+    </div>
+  </div>
   <label>服务端 Token（server/config.local.json）</label>
   <input id="token" type="password" placeholder="粘贴 64 位 token">
   <button id="save">保存并测试连接</button>
-  <button id="injectPrompt">注入协议到任务标签</button>
+  <button id="injectPrompt">注入协议到当前标签</button>
+  <button id="miniPopout" title="把当前 AI 标签弹成独立小窗：小窗保持「可见」状态，站点脚本不被 Chrome 后台节流，后台任务恢复前台速度。注意：小窗不要被完全遮挡、不要最小化">小窗加速（后台全速执行）</button>
+  <div id="miniState" class="dbg"></div>
   <button id="rotateToken">轮换 Token（旧 token 立即失效）</button>
   <button id="openHealth">健康自检页</button>
   <div class="mode" style="border:1px solid #374151;border-radius:8px;padding:8px;margin:8px 0">

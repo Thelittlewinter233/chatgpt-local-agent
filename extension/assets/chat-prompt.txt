@@ -71,7 +71,7 @@
 
 - 文件操作只能在允许的根目录内（边界见 computer_info 返回）。
 - shell 命令的开头命令词必须在白名单内（node、git、python、pip、npm、dir、type、rg 等）。白名单外的命令会触发页内人工确认：返回结果前会有延迟，用户批准后才执行，60 秒未确认或用户拒绝都会返回 denied。被拒后把命令名告诉我，由我修改配置后重试，不要尝试绕过。
-- 我的主工作目录是 d:\Desktop\agent_project。
+- 我的主工作目录是 d:\Desktop\agent_project\tmp。
 - 同一指令失败或被拒后不要原样重发超过 1 次；换方法或向我说明。
 - 交互终端的输出是原始 PTY 文本（含 ANSI 控制符和回显），输出安静不代表命令完成；单条命令验收优先用 shell，需要保留变量/状态才用 terminal_start。
 - 一次性 shell 大输出会话化：waitMs 超时返回 running + sessionId，不会杀进程，用 session_read 续读。

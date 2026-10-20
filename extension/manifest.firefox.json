@@ -3,7 +3,7 @@
   "name": "ChatGPT Local Agent Bridge",
   "version": "0.1.0",
   "description": "把网页 AI 对话（ChatGPT/智谱/DeepSeek/Kimi/豆包/通义千问）中的 agent 指令块转发给本机 Agent 服务执行，并把结果回填到对话。",
-  "permissions": ["storage", "scripting", "tabs"],
+  "permissions": ["storage", "scripting", "tabs", "alarms"],
   "host_permissions": [
     "*://*.chatgpt.com/*",
     "*://*.chatglm.cn/*",

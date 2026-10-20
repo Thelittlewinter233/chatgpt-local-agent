@@ -1,7 +1,26 @@
 var __abMakeHeuristicAdapter = (() => {
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
   const norm = s => String(s || '').replace(/\s+/g, '');
   const inputHasPending = el => norm((el.textContent || '') + (el.value || '')).includes('agent-result');
+
+  function settled(test, ms, el) {
+    return new Promise(resolve => {
+      if (test()) { resolve(true); return; }
+      let done = false;
+      const finish = v => {
+        if (done) return;
+        done = true;
+        try { mo.disconnect(); } catch { }
+        if (el) { try { el.removeEventListener('input', onEv); el.removeEventListener('change', onEv); } catch { } }
+        clearTimeout(timer);
+        resolve(v);
+      };
+      const onEv = () => { if (test()) finish(true); };
+      const mo = new MutationObserver(onEv);
+      try { mo.observe(el, { subtree: true, childList: true, characterData: true }); } catch { }
+      if (el) { try { el.addEventListener('input', onEv); el.addEventListener('change', onEv); } catch { } }
+      const timer = setTimeout(() => finish(test()), ms);
+    });
+  }
 
   function visible(el) {
     const rect = el.getBoundingClientRect();
@@ -47,8 +66,7 @@ var __abMakeHeuristicAdapter = (() => {
           dt.setData('text/plain', text);
           el.dispatchEvent(new ClipboardEvent('paste', { clipboardData: dt, bubbles: true, cancelable: true }));
         } catch { }
-        await sleep(250);
-        if (inputHasPending(el)) return true;
+        if (await settled(() => inputHasPending(el), 250, el)) return true;
         try {
           const sel = window.getSelection();
           sel.removeAllRanges();
@@ -58,8 +76,7 @@ var __abMakeHeuristicAdapter = (() => {
           sel.addRange(range);
           document.execCommand('insertText', false, text);
         } catch { }
-        await sleep(250);
-        if (inputHasPending(el)) return true;
+        if (await settled(() => inputHasPending(el), 250, el)) return true;
         if (el.tagName === 'TEXTAREA') {
           const proto = Object.getPrototypeOf(el);
           const setter = Object.getOwnPropertyDescriptor(proto, 'value')?.set;
@@ -73,13 +90,7 @@ var __abMakeHeuristicAdapter = (() => {
       async send() {
         const el = this.findInput();
         if (!el) return false;
-        const waitCleared = async () => {
-          for (let t = 0; t < 12; t++) {
-            await sleep(250);
-            if (!inputHasPending(el)) return true;
-          }
-          return false;
-        };
+        const waitCleared = () => settled(() => !inputHasPending(el), 3000, el);
         for (let i = 0; i < 2; i++) {
           const btn = findSendButton();
           if (btn && !btn.disabled) {

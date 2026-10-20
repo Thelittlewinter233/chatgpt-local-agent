@@ -30,7 +30,97 @@ async function refresh() {
   const fail = g.failStreak || 0;
   const fuse = fail >= 3 ? ' · 已熔断，点新任务解除' : '';
   $('guard').textContent = '任务进度：' + step + '/' + limit + ' 步 · 连续失败 ' + fail + fuse;
+  refreshKa();
 }
+
+function agoText(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's前';
+  if (s < 3600) return Math.round(s / 60) + '分前';
+  return Math.round(s / 3600) + '小时前';
+}
+
+function ageShort(ms) {
+  const s = Math.max(0, Math.round(ms / 1000));
+  if (s < 60) return s + 's';
+  if (s < 3600) return Math.round(s / 60) + 'm';
+  return Math.round(s / 3600) + 'h';
+}
+
+async function refreshKa() {
+  let tabId = null;
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0] && tabs[0].id != null) tabId = String(tabs[0].id);
+  } catch { }
+  const kaKey = 'ab_ka_' + (tabId || 'x');
+  const tlKey = 'ab_dbg_timeline_' + (tabId || 'x');
+  let o = {};
+  try { o = await chrome.storage.local.get(null); } catch { }
+  const ka = o[kaKey] || o.ab_ka_x;
+  let tl = o[tlKey] || o.ab_dbg_timeline_x || [];
+  let tlHost = '';
+  if (!tl.length) {
+    const candidates = Object.entries(o)
+      .filter(([key, value]) => key.startsWith('ab_dbg_timeline_') && Array.isArray(value) && value.length)
+      .map(([key, value]) => ({ key, value, ts: Math.max(...value.map(e => Number(e && e.ts) || 0)) }))
+      .sort((a, b) => b.ts - a.ts);
+    if (candidates.length) {
+      tl = candidates[0].value;
+      const suffix = candidates[0].key.slice('ab_dbg_timeline_'.length);
+      const related = o['ab_ka_' + suffix];
+      const latest = tl.reduce((a, b) => (Number(a && a.ts) || 0) >= (Number(b && b.ts) || 0) ? a : b, null);
+      tlHost = (related && related.host) || (latest && latest.host) || ('tab ' + suffix);
+    }
+  }
+  const driveRows = (Array.isArray(o.ab_drive_log) ? o.ab_drive_log : []).slice(-8).reverse();
+  $('driveLog').textContent = driveRows.length
+    ? 'Drive log\n' + driveRows.map(e => '-' + ageShort(Date.now() - (e.ts || 0)).padStart(4)
+      + ' ' + e.name + (e.tabId != null ? ' tab' + e.tabId : '') + ' ' + String(e.out || '').slice(0, 90)).join('\n')
+    : 'Drive log: no entries';
+  const stateEl = $('kaState');
+  if (!ka) {
+    $('kaDot').className = 'dot';
+    stateEl.textContent = tabId
+      ? 'keepalive：无记录（标签页需重载扩展 + F5）'
+      : 'keepalive：取不到当前标签';
+  } else {
+    const on = ka.state === 'connected';
+    $('kaDot').className = 'dot ' + (on ? 'on' : 'off');
+    stateEl.textContent = 'keepalive：' + (on ? '已连接' : String(ka.state))
+      + (ka.code != null ? '（code ' + ka.code + '）' : '')
+      + ' · ' + (ka.host || '?') + ' · ' + agoText(Date.now() - (ka.ts || 0))
+      + (tabId ? ' · tab ' + tabId : '');
+  }
+  const rows = (Array.isArray(tl) ? tl : []).slice(-5).reverse();
+  $('kaTimeline').textContent = rows.length
+    ? (tlHost ? 'Timeline fallback [' + tlHost + ']\n' : '') + rows.map(e => '-' + ageShort(Date.now() - (e.ts || 0)).padStart(4)
+      + ' ' + e.stage + (e.extra ? ' ' + String(e.extra).slice(0, 44) : '')).join('\n')
+    : '无事件时间线';
+  const sw = o.ab_sw;
+  const dr = o.ab_drive;
+  const bg = [];
+  bg.push(sw && sw.stage
+    ? 'SW   [' + agoText(Date.now() - (sw.ts || 0)) + '] ' + sw.stage
+      + (sw.tabId != null ? ' tab' + sw.tabId : '')
+      + (sw.extra ? ' ' + String(sw.extra).slice(0, 28) : '')
+    : 'SW   无记录');
+  bg.push(dr && dr.out
+    ? '驱动 [' + agoText(Date.now() - (dr.ts || 0)) + '] tab' + dr.tabId + ' ' + String(dr.out).slice(0, 32)
+    : '驱动 无记录');
+  $('bgState').textContent = bg.join('\n');
+}
+
+function applyDiagCollapsed(collapsed) {
+  $('diagBody').style.display = collapsed ? 'none' : 'block';
+  $('diagArrow').textContent = collapsed ? '▸' : '▾';
+}
+
+$('diagHead').addEventListener('click', () => {
+  const collapsed = $('diagBody').style.display !== 'none';
+  localStorage.setItem('abDiagCollapsed', collapsed ? '1' : '0');
+  applyDiagCollapsed(collapsed);
+});
 
 $('save').addEventListener('click', async () => {
   await chrome.storage.local.set({ token: $('token').value.trim() });
@@ -86,6 +176,24 @@ $('rotateToken').addEventListener('click', async () => {
 
 $('openHealth').addEventListener('click', () => {
   window.open(chrome.runtime.getURL('health.html'));
+});
+
+async function refreshMini() {
+  const res = await chrome.runtime.sendMessage({ type: 'mini-state' }).catch(e => ({ ok: false, error: String(e) }));
+  if (!res || !res.ok) { $('miniState').textContent = ''; return; }
+  $('miniState').textContent = res.isMini
+    ? '当前 AI 标签已是小窗（后台全速）'
+    : res.isAiSite
+      ? '当前标签是 AI 站点（普通标签页，后台被节流）'
+      : '';
+}
+
+$('miniPopout').addEventListener('click', async () => {
+  const res = await chrome.runtime.sendMessage({ type: 'mini-popout' }).catch(e => ({ ok: false, error: String(e) }));
+  $('err').textContent = res && res.ok
+    ? (res.already ? '已在小窗中，已聚焦该窗口' : '已弹出小窗：保持小窗可见（勿完全遮挡/最小化），后台全速执行')
+    : '小窗失败：' + ((res && res.error) || '未知');
+  refreshMini();
 });
 
 async function refreshMode() {
@@ -170,4 +278,7 @@ $('addDomain').addEventListener('click', async () => {
 
 refreshDomains();
 refresh();
+refreshMini();
+applyDiagCollapsed(localStorage.getItem('abDiagCollapsed') !== '0');
 setInterval(refresh, 2000);
+setInterval(refreshMini, 5000);

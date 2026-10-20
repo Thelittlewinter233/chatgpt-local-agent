@@ -79,7 +79,7 @@ export function classifyCommand(config, command, cwd, bypassRoots) {
   const policy = config.policy || {};
   if (policy.defaultAllow) return { kind: 'ok' };
   const whitelist = new Set((policy.whitelist || []).map(w => String(w).toLowerCase()));
-  const segments = command.split(/;|\||\n|&&/).map(s => s.trim()).filter(Boolean);
+  const segments = command.split(/[;|\n]|&{1,2}/).map(s => s.trim()).filter(Boolean);
   for (const seg of segments) {
     const head = seg.replace(/^[-&@\s]+/, '').split(/[\s(]/)[0].toLowerCase();
     if (whitelist.has(head)) continue;
