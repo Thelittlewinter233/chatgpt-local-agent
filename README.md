@@ -1,6 +1,6 @@
-# ChatGPT Local Agent Bridge
+# Local Agent Bridge
 
-把 chatgpt.com 网页版（Free 档可用）接入本机 Agent：AI 在对话中输出 ` ```agent ` 指令块，Chrome 扩展捕获后交给本地服务真实执行（文件读写、PowerShell/Git Bash 命令、持久交互终端、后台会话），结果自动回填输入框并自动发送，形成"对话即操作电脑"的闭环。同时支持智谱清言、DeepSeek、Kimi、豆包、通义千问等多个网页 AI 站点。
+把 网页版chat 接入本机 Agent：AI 在对话中输出 ` ```agent ` 指令块，Chrome 扩展捕获后交给本地服务真实执行（文件读写、PowerShell/Git Bash 命令、持久交互终端、后台会话），结果自动回填输入框并自动发送，形成"对话即操作电脑"的闭环。同时支持智谱清言、DeepSeek、Kimi、豆包、通义千问等多个网页 AI 站点。
 
 ```
 你在网页 AI 对话里发任务
@@ -16,6 +16,7 @@
 
 ```
 ├── start.bat                  # 一键前台启动服务
+├── start-agent-chrome.bat     # 启动后台不限速的专属 Chrome（见「后台运行指南」）
 ├── scripts/
 │   ├── server-loop.bat        # 隐藏自启用的带守护循环启动器
 │   └── install-autostart.ps1  # 安装/卸载登录自启（-Remove 卸载）
@@ -101,7 +102,7 @@ npm run start
 ### 第 5 步：验证闭环
 
 1. 打开 [chatgpt.com](https://chatgpt.com)（或 chatglm.cn / chat.deepseek.com / www.kimi.com / chat.qwen.ai 任一），随便进一个对话
-2. 按 **Alt+P** 注入协议（或手动粘贴 `docs/chat-prompt.md` 分割线内内容）
+2. 按 **Alt+P** 或点击插件popup中的“注入协议”按键先注入协议（或手动粘贴 `docs/chat-prompt.md` 分割线内内容）
 3. 补一句任务后发送，推荐第一条验证任务：
 
    > 在 tmp 目录创建 hello.txt 内容为 hi，然后读回来确认
@@ -164,8 +165,8 @@ Firefox 注意事项：
 - **登录自启**（可选）：PowerShell 运行 `scripts/install-autostart.ps1`（隐藏窗口 + 崩溃自动重启），`-Remove` 卸载
 - **多任务连发**：任务正常结束时 AI 会输出 `done`，计数自动清零，同会话可直接下下一个任务；只有步数耗尽/熔断时才需要点 popup 的"新任务"
 - **急刹车**：popup"暂停监听"立即停；关闭"自动发送"变为填入待你手动回车
-- **多标签页**：每个 AI 网页标签都是独立会话（各自一条 WS、各自检测/回填/发送），可以同时跑多个任务互不干扰；确认条只弹在发起该命令的那个标签
-- **最小化后台跑**：每个标签自己持有一条 keep-alive WebSocket 到本地服务，用来豁免 Chrome 对隐藏标签的定时器节流与页面冻结；popup 顶部的 keepalive 行和事件时间线可以确认它是否连上
+- **多标签页**：每个 AI 网页标签都是独立会话（各自一条 WS、各自检测/回填/发送），可以同时跑多个任务互不干扰；确认条只弹在发起该命令的那个标签，详见[多 AI chat 同时运行](#57-多-ai-chat-同时运行)
+- **最小化后台跑**：每个标签自己持有一条 keep-alive WebSocket 到本地服务，用来豁免 Chrome 对隐藏标签的定时器节流与页面冻结；popup 顶部的 keepalive 行和事件时间线可以确认它是否连上。想要更快更稳的后台执行（小窗/专属 Chrome），见[后台运行指南](#58-后台运行指南最小化切走后继续跑)
 
 ### 5.3 协议一览
 
@@ -227,6 +228,39 @@ AI 站点经常改名换域名（如 tongyi.com → qianwen.com），manifest �
 | chatgpt.com（Free） | 创建 GPT 需 Plus；Free 用 Alt+P 注入，或配"自定义指令"（见 docs/custom-instructions.md） |
 
 注意：智能体的系统提示词里协议遵循效果因站而异，首次使用先用自检任务验证一轮。
+
+### 5.7 多 AI chat 同时运行
+
+v5.0 起每个 AI 网页标签都是**完全独立的会话**，多开不再需要任何切换或"接管"：
+
+- **同时跑多个任务**：GLM 挂一个重构任务、DeepSeek 挂一个文档任务，两个标签各自独立检测指令块 → 执行 → 回填 → 发送，互不等待、互不干扰
+- **跨站点对比**：同一个任务同时发给 GPT 和 GLM，看谁先跑完、谁干得好
+- **确认条不串**：白名单外命令的确认条只弹在**发起该命令的那个标签**，其他标签照常工作；批准/拒绝也只影响发起它的任务
+- **原理**：每个标签持有自己的一条 WebSocket 连接（hello 时带独立 sessionId），服务端按会话隔离确认流程与结果重放缓存；标签关闭自动清理对应会话
+- **注意**：步数计数跨标签共享（见 5.5），多任务连跑大任务时留意 popup 进度；两个标签发**完全相同**的 agent 块时，后到者按重复内容处理（新标签页中的重复块会正常回填，不会卡死）
+
+### 5.8 后台运行指南（最小化/切走后继续跑）
+
+Chrome 默认对隐藏标签做三层限制（定时器节流 → 整页冻结 → Service Worker 回收），本项目内置了逐层对抗，并按"想要的速度"提供三档方案：
+
+| 方案 | 操作 | 后台速度 | 适用 |
+|---|---|---|---|
+| 内置兜底（默认生效，零配置） | 无需任何操作 | 每步约 1–4 分钟 | 挂机跑不急的长任务 |
+| 小窗加速 | popup 点「小窗加速」把 AI 标签弹成独立小窗 | 接近前台 | 临时加速单个标签 |
+| 专属 Chrome（推荐） | 双击 `start-agent-chrome.bat` | **与前台完全一致** | 经常后台跑任务 |
+
+**内置兜底（默认就有）**：每个标签自持 keep-alive WebSocket（豁免页面冻结）+ 扩展后台每 30 秒注入一次检测驱动（不受页面定时器节流影响）+ 结果补投递。即使最小化 Chrome 过夜，任务也会持续推进，只是受站点自身渲染节流影响，每步比前台慢。popup 诊断详情里的 keepalive 状态、驱动日志、事件时间线可随时确认后台链路是否健康；服务端日志在 `server/runtime/ws.log`。
+
+**小窗加速**：popup 点「小窗加速」把当前 AI 标签弹成 480×700 独立小窗——小窗保持「可见」状态即不受节流，速度恢复前台水平。注意：小窗被其他窗口**完全**遮挡或最小化后会退回节流状态（留一条边可见即可）；多个 AI 站点可各弹一个小窗。
+
+**专属 Chrome（后台不限速，推荐）**：双击仓库根目录的 **`start-agent-chrome.bat`**，它会用一个独立 profile 启动一个关闭了全部后台节流的 Chrome 实例（定时器节流/renderer 降权/遮挡判定/intensive throttling 四层全关）：
+
+1. 首次使用：在该实例里打开 `chrome://extensions` → 开发者模式 → 加载仓库的 `extension/` 目录
+2. popup 粘贴**同一个 token**（`server/config.local.json`，服务端不变），登录各 AI 站点（登录态持久，只需一次）
+3. 之后在这个实例里照常发任务，**随便最小化、遮挡、切全屏都是满速实时执行**，连小窗加速按钮都不需要
+4. profile 存于 `%LOCALAPPDATA%\ChromeAgentProfile`；日常 Chrome 与它互不干扰
+
+排错：popup 展开诊断详情看「驱动」行是否每 30–60 秒刷新、时间线是否持续出现 `cmd-sent → fill-done → send-done`；服务端 `ws.log` 的 `cmd #` 时间戳应均匀分布在后台时段。
 
 ## 配置详解（server/config.json）
 
@@ -340,7 +374,3 @@ node smoke.mjs  # 无扩展全链路自测（需服务已启动）
 ## 安全须知
 
 本工具把"当前 Windows 用户权限的文件与 shell"暴露给 AI 对话，等于把执行权交给模型输出。请：保持默认白名单 + 页内确认；不要把 `allowedRoots` 开到盘根；token 不要外传；在不可信对话里用 popup 暂停监听。详细威胁模型见上游项目 [chat-local-agent-mcp](https://github.com/AblazeGHR/chat-local-agent-mcp) 的 SECURITY 思路（本项目引擎 vendored 自它，MIT）。
-
-### Dedicated Agent Chrome launcher
-
-Double-click `start-agent-chrome.bat` to launch a separate Chrome profile with background throttling disabled (no pages are opened automatically; start any AI site yourself). On the first run, open `chrome://extensions`, enable Developer mode, and load the project `extension/` directory in this Chrome instance. Paste the same server token used by the main Chrome instance into the extension popup; the server token does not change. Keep this Chrome instance running for full-speed background work; the popup small-window button is not needed here. The profile is stored at `%LOCALAPPDATA%\ChromeAgentProfile`.
