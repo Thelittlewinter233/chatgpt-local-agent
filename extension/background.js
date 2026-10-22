@@ -1,7 +1,6 @@
 if (typeof importScripts === 'function') importScripts('sites.js');
 
 const tabSessions = new Map();
-let globalMsgCounter = 0;
 let rotateWaiter = null;
 let policyWaiter = null;
 const BACKOFF = [1000, 2000, 5000, 10000, 30000];
@@ -16,6 +15,14 @@ function driveLog(name, tabId, out) {
   driveLogQueue = driveLogQueue.then(async () => {
     const stored = await chrome.storage.local.get('ab_drive_log').catch(() => ({}));
     const rows = Array.isArray(stored.ab_drive_log) ? stored.ab_drive_log : [];
+    const last = rows[rows.length - 1];
+    if (last && last.name === entry.name && String(last.tabId) === String(entry.tabId) && last.out === entry.out) {
+      if (entry.ts - (Number(last.ts) || 0) < 5000) return;
+      last.ts = entry.ts;
+      last.n = (Number(last.n) || 1) + 1;
+      await chrome.storage.local.set({ ab_drive_log: rows.slice(-50) });
+      return;
+    }
     await chrome.storage.local.set({ ab_drive_log: [...rows, entry].slice(-50) });
   }).catch(e => console.warn('[AgentBridge][drive-log]', String(e && e.message || e)));
   return driveLogQueue;
@@ -152,12 +159,34 @@ function scheduleSessionReconnect(s) {
 }
 
 function closeSessionSocket(s) {
+  failPending(s, 'server offline');
   if (!s.ws) return;
   const socket = s.ws;
   s.ws = null;
   socket.onclose = null;
   socket.onmessage = null;
   try { socket.close(); } catch { }
+}
+
+function failPending(s, error) {
+  if (!s || !s.pending || !s.pending.size) return;
+  const waiters = [...s.pending.values()];
+  s.pending.clear();
+  for (const waiter of waiters) { try { waiter({ ok: false, error }); } catch { } }
+}
+
+let installId = null;
+
+async function ensureInstallId() {
+  if (installId) return installId;
+  const o = await getStore('ab_install_id');
+  let id = o.ab_install_id;
+  if (!id) {
+    id = Date.now().toString(36) + Math.random().toString(36).slice(2, 10);
+    try { await chrome.storage.local.set({ ab_install_id: id }); } catch { }
+  }
+  installId = id;
+  return id;
 }
 
 async function connectSession(tabId) {
@@ -178,7 +207,7 @@ async function connectSession(tabId) {
   }
   s.ws.onopen = () => {
     s.helloTimer = setTimeout(() => { try { s.ws && s.ws.close(); } catch { } }, 6000);
-    sessionSend(s, { type: 'hello', token, v: 1, sessionId: 'tab-' + tabId + '-' + Date.now() });
+    ensureInstallId().then(id => sessionSend(s, { type: 'hello', token, v: 1, sessionId: 'tab-' + tabId + '-' + id }));
   };
   s.ws.onmessage = ev => {
     let m;
@@ -188,6 +217,7 @@ async function connectSession(tabId) {
   s.ws.onclose = ev => {
     s.ws = null;
     clearSessionTimers(s);
+    failPending(s, 'server offline');
     swNote('session-closed', tabId, ev && ev.code != null ? 'code=' + ev.code : '');
     scheduleSessionReconnect(s);
   };
@@ -222,16 +252,17 @@ async function getProtocolText() {
 
 async function handleFrame(m, s) {
   if (m.type === 'hello_ok') {
-    s.authed = true;
     s.backoffIdx = 0;
     s.sessionId = m.sessionId || s.sessionId;
-    swNote('session-authed', s.tabId, s.sessionId || '');
     if (s.helloTimer) { clearTimeout(s.helloTimer); s.helloTimer = null; }
-    setStatus('connected');
-    s.heartbeatTimer = setInterval(() => sessionSend(s, { type: 'ping' }), 20000);
     const storageKey = 'lastAckId_' + s.tabId;
     const o = await getStore(storageKey);
     s.lastAckId = o[storageKey] || 0;
+    s.msgCounter = Math.max(s.msgCounter, s.lastAckId);
+    s.authed = true;
+    swNote('session-authed', s.tabId, s.sessionId || '');
+    setStatus('connected');
+    s.heartbeatTimer = setInterval(() => sessionSend(s, { type: 'ping' }), 20000);
     sessionSend(s, { type: 'resume', lastAckId: s.lastAckId });
     return;
   }
@@ -327,7 +358,7 @@ function sendCmd(msg, tabId) {
     }
     while (target && !target.authed && Date.now() < deadline) await new Promise(r => setTimeout(r, 150));
     if (!target || !target.authed) { resolve({ ok: false, error: 'server offline' }); return; }
-    const msgId = ++globalMsgCounter;
+    const msgId = ++target.msgCounter;
     const timer = setTimeout(() => {
       if (target.pending.has(msgId)) {
         target.pending.delete(msgId);
@@ -552,7 +583,21 @@ chrome.tabs.onRemoved.addListener(async tabId => {
   forgetTabConfirms(tabId);
   kaMainInjected.delete(tabId);
   undeliveredResults.delete(tabId);
-  try { await chrome.storage.local.remove(['ab_ka_' + tabId, 'ab_dbg_timeline_' + tabId]); } catch (e) { }
+  try {
+    await chrome.storage.local.remove([
+      'ab_ka_' + tabId, 'ab_dbg_timeline_' + tabId,
+      'ab_guard_' + tabId, 'ab_seen_' + tabId, 'ab_seq_' + tabId, 'lastAckId_' + tabId
+    ]);
+  } catch (e) { }
+  try {
+    const o = await getStore('pend');
+    const pend = o.pend || {};
+    let touched = false;
+    for (const key of Object.keys(pend)) {
+      if (pend[key] && String(pend[key].tabId) === String(tabId)) { delete pend[key]; touched = true; }
+    }
+    if (touched) await chrome.storage.local.set({ pend });
+  } catch (e) { }
 });
 
 async function probeTab(tabId) {
@@ -716,12 +761,17 @@ async function syncDynamicScripts() {
     const matches = await dynamicSiteMatches();
     const registered = await chrome.scripting.getRegisteredContentScripts();
     const cur = registered.find(s => s.id === 'ab-dynamic');
+    const mainCur = registered.find(s => s.id === 'ab-dynamic-main');
     const same = cur && JSON.stringify([...(cur.matches || [])].sort()) === JSON.stringify([...matches].sort());
-    if (same) return;
-    if (cur) await chrome.scripting.unregisterContentScripts({ ids: ['ab-dynamic'] });
-    if (matches.length) {
-      const cs = chrome.runtime.getManifest().content_scripts[0];
+    const mainSame = mainCur && JSON.stringify([...(mainCur.matches || [])].sort()) === JSON.stringify([...matches].sort());
+    if (!same && cur) await chrome.scripting.unregisterContentScripts({ ids: ['ab-dynamic'] });
+    if (!mainSame && mainCur) await chrome.scripting.unregisterContentScripts({ ids: ['ab-dynamic-main'] });
+    if (matches.length && !same) {
+      const cs = chrome.runtime.getManifest().content_scripts.find(item => item.world !== 'MAIN');
       await chrome.scripting.registerContentScripts({ id: 'ab-dynamic', matches, js: cs.js, runAt: 'document_idle', persistAcrossSessions: true });
+    }
+    if (matches.length && !mainSame) {
+      await chrome.scripting.registerContentScripts({ id: 'ab-dynamic-main', matches, js: ['probe-main.js'], runAt: 'document_start', world: 'MAIN', persistAcrossSessions: true });
     }
     console.log('[AgentBridge] dynamic content scripts synced:', matches.join(' '));
   } catch (e) {

@@ -1,7 +1,17 @@
 const $ = id => document.getElementById(id);
 
+async function activeTabId() {
+  try {
+    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
+    if (tabs && tabs[0] && tabs[0].id != null) return String(tabs[0].id);
+  } catch { }
+  return null;
+}
+
 async function refresh() {
-  const o = await chrome.storage.local.get(['wsStatus', 'wsError', 'ab_opts', 'token', 'ab_dbg', 'ab_guard']);
+  const tabId = await activeTabId();
+  const guardKey = 'ab_guard_' + (tabId || 'x');
+  const o = await chrome.storage.local.get(['wsStatus', 'wsError', 'ab_opts', 'token', 'ab_dbg', 'ab_guard', 'ab_guard_x', guardKey]);
   const status = o.wsStatus || 'unknown';
   const labels = {
     connected: '已连接本地服务',
@@ -24,12 +34,14 @@ async function refresh() {
   } else {
     $('dbg').textContent = '页面脚本：无心跳（chatgpt.com 标签页可能未刷新）';
   }
-  const g = o.ab_guard || {};
+  const g = o[guardKey] || o.ab_guard_x || o.ab_guard || {};
   const step = g.step || 0;
   const limit = Math.min(Math.max(Number((o.ab_opts || {}).maxSteps) || 30, 10), 100);
   const fail = g.failStreak || 0;
   const fuse = fail >= 3 ? ' · 已熔断，点新任务解除' : '';
-  $('guard').textContent = '任务进度：' + step + '/' + limit + ' 步 · 连续失败 ' + fail + fuse;
+  const loop = Number(g.loopCount) || 0;
+  const loopText = loop >= 2 ? ' · 空转 ' + loop + ' 次' : '';
+  $('guard').textContent = '任务进度' + (tabId ? '（tab ' + tabId + '）' : '') + '：' + step + '/' + limit + ' 步 · 连续失败 ' + fail + loopText + fuse;
   refreshKa();
 }
 
@@ -48,11 +60,7 @@ function ageShort(ms) {
 }
 
 async function refreshKa() {
-  let tabId = null;
-  try {
-    const tabs = await chrome.tabs.query({ active: true, currentWindow: true });
-    if (tabs && tabs[0] && tabs[0].id != null) tabId = String(tabs[0].id);
-  } catch { }
+  const tabId = await activeTabId();
   const kaKey = 'ab_ka_' + (tabId || 'x');
   const tlKey = 'ab_dbg_timeline_' + (tabId || 'x');
   let o = {};
@@ -76,7 +84,8 @@ async function refreshKa() {
   const driveRows = (Array.isArray(o.ab_drive_log) ? o.ab_drive_log : []).slice(-8).reverse();
   $('driveLog').textContent = driveRows.length
     ? 'Drive log\n' + driveRows.map(e => '-' + ageShort(Date.now() - (e.ts || 0)).padStart(4)
-      + ' ' + e.name + (e.tabId != null ? ' tab' + e.tabId : '') + ' ' + String(e.out || '').slice(0, 90)).join('\n')
+      + ' ' + e.name + (e.tabId != null ? ' tab' + e.tabId : '') + ' ' + String(e.out || '').slice(0, 90)
+      + (Number(e.n) > 1 ? ' x' + e.n : '')).join('\n')
     : 'Drive log: no entries';
   const stateEl = $('kaState');
   if (!ka) {
@@ -92,7 +101,7 @@ async function refreshKa() {
       + ' · ' + (ka.host || '?') + ' · ' + agoText(Date.now() - (ka.ts || 0))
       + (tabId ? ' · tab ' + tabId : '');
   }
-  const rows = (Array.isArray(tl) ? tl : []).slice(-5).reverse();
+  const rows = (Array.isArray(tl) ? tl : []).slice(-15).reverse();
   $('kaTimeline').textContent = rows.length
     ? (tlHost ? 'Timeline fallback [' + tlHost + ']\n' : '') + rows.map(e => '-' + ageShort(Date.now() - (e.ts || 0)).padStart(4)
       + ' ' + e.stage + (e.extra ? ' ' + String(e.extra).slice(0, 44) : '')).join('\n')
@@ -149,8 +158,21 @@ $('maxSteps').addEventListener('change', async e => {
 });
 
 $('reset').addEventListener('click', async () => {
-  await chrome.storage.local.set({ resetGuard: Date.now(), pend: {}, ab_seen: [] });
-  $('err').textContent = '已重置计数、熔断与去重记忆';
+  const tabId = await activeTabId();
+  const drop = tabId
+    ? ['ab_guard_' + tabId, 'ab_seen_' + tabId, 'ab_seq_' + tabId]
+    : ['ab_guard', 'ab_seen'];
+  try { await chrome.storage.local.remove(drop); } catch { }
+  const o = await chrome.storage.local.get('pend');
+  const pend = o.pend || {};
+  for (const key of Object.keys(pend)) {
+    if (!tabId || String((pend[key] || {}).tabId) === String(tabId)) delete pend[key];
+  }
+  await chrome.storage.local.set({ pend, resetGuard: { tab: tabId, ts: Date.now() } });
+  $('err').textContent = tabId
+    ? '已重置当前标签页（tab ' + tabId + '）的计数、熔断与去重记忆'
+    : '已重置全部标签页的计数、熔断与去重记忆';
+  refresh();
 });
 
 $('injectPrompt').addEventListener('click', async () => {

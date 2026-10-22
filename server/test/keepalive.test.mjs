@@ -69,3 +69,17 @@ test('extension origin still connects without ka credential', async () => {
   assert.equal(r.outcome, 'hello_ok');
   r.ws.close();
 });
+
+test('ka auth failures are attributed per credential and origin', async () => {
+  for (let i = 0; i < 4; i += 1) {
+    const r = await connect(`${url}/?ka=${'f'.repeat(16)}`, 'https://evil.example');
+    assert.ok(r.outcome === 'error' || r.outcome === 'closed', 'expected rejection, got ' + r.outcome);
+    try { r.ws.close(); } catch { }
+  }
+  const ext = await connect(url, 'chrome-extension://ka-test-attribution');
+  assert.equal(ext.outcome, 'hello_ok');
+  ext.ws.close();
+  const other = await connect(`${url}/?ka=${kaCred}`, 'https://chat.deepseek.com');
+  assert.equal(other.outcome, 'hello_ok');
+  other.ws.close();
+});

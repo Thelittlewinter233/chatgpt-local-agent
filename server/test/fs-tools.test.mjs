@@ -17,6 +17,27 @@ test('write and read roundtrip', async () => {
   assert.equal(r.sha256, w.sha256);
 });
 
+test('append creates a missing file and appends to existing content', async () => {
+  const file = path.join(root, 'append', 'a.txt');
+  const first = await tools.append({ path: file, content: 'first\n' });
+  const second = await tools.append({ path: file, content: 'second\n' });
+  assert.equal(first.bytes, 6);
+  assert.equal(second.bytes, 7);
+  assert.equal((await tools.read({ path: file })).content, 'first\nsecond\n');
+  assert.equal(second.sha256, (await import('node:crypto')).createHash('sha256').update('second\n').digest('hex'));
+});
+
+test('append uses path restrictions and supports write-plus-append chunks', async () => {
+  const outside = path.join(path.dirname(root), 'agent-append-probe.txt');
+  await assert.rejects(() => tools.append({ path: outside, content: 'blocked' }), /Path outside allowedRoots/);
+  const file = path.join(root, 'large.txt');
+  const first = 'a'.repeat(4000);
+  const second = 'b'.repeat(4000);
+  await tools.write({ path: file, content: first });
+  await tools.append({ path: file, content: second });
+  assert.equal((await tools.read({ path: file, maxBytes: 8192 })).content, first + second);
+});
+
 test('out-of-roots write is denied without ctx and allowed with bypassRoots', async () => {
   const outside = path.join(path.dirname(root), 'agent-bypass-probe.txt');
   await assert.rejects(() => tools.write({ path: outside, content: 'x' }), /Path outside allowedRoots/);

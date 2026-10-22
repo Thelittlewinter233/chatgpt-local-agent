@@ -71,13 +71,13 @@ async function runShell(args, ctx) {
     e.denied = true;
     throw e;
   }
-  if (verdict.kind === 'confirm' && !config.policy?.allowOutOfRoots) {
+  if (verdict.kind === 'confirm') {
     const preview = `shell [${verdict.head}] ${String(args.command).slice(0, 160)}`;
     let approved = false;
     try { if (ctx && ctx.requestConfirm) approved = await ctx.requestConfirm(preview); }
     catch { approved = false; }
     if (!approved) {
-      const e = new Error(`command "${verdict.head}" was rejected by the user or confirm timed out (60s)`);
+      const e = new Error(`command "${verdict.head}" was not approved (rejected, dismissed, or the confirm request expired)`);
       e.denied = true;
       throw e;
     }
@@ -103,10 +103,10 @@ async function runShell(args, ctx) {
   return { ...result, sessionId: state.id };
 }
 
-const FS_MUTATING = new Set(['fs_write', 'fs_edit', 'fs_edit_multi', 'fs_move', 'fs_mkdir', 'fs_delete']);
+const FS_MUTATING = new Set(['fs_write', 'fs_append', 'fs_edit', 'fs_edit_multi', 'fs_move', 'fs_mkdir', 'fs_delete']);
 
 async function dispatch(action, args, ctx) {
-  const mutating = ['fs_write', 'fs_edit', 'fs_edit_multi', 'fs_move', 'fs_mkdir', 'fs_delete', 'shell', 'terminal_start', 'session_write', 'session_close'];
+  const mutating = ['fs_write', 'fs_append', 'fs_edit', 'fs_edit_multi', 'fs_move', 'fs_mkdir', 'fs_delete', 'shell', 'terminal_start', 'session_write', 'session_close'];
   const started = Date.now();
   let outcome = 'ok';
   let bypassed = false;
@@ -160,6 +160,7 @@ async function route(action, args, ctx) {
     case 'computer_info': return computerInfo();
     case 'fs_read': return fsTools.read(args, ctx);
     case 'fs_write': return fsTools.write(args, ctx);
+    case 'fs_append': return fsTools.append(args, ctx);
     case 'fs_edit': return fsTools.edit(args, ctx);
     case 'fs_edit_multi': return fsTools.editMulti(args, ctx);
     case 'fs_glob': return fsTools.glob(args, ctx);
@@ -231,12 +232,14 @@ function setPolicy(patch) {
   const view = () => ({
     allowOutOfRoots: !!config.policy?.allowOutOfRoots,
     confirmUnknown: !!config.policy?.confirmUnknown,
-    defaultAllow: !!config.policy?.defaultAllow
+    defaultAllow: !!config.policy?.defaultAllow,
+    interpreterPolicy: ['confirm', 'deny', 'allow'].includes(config.policy?.interpreterPolicy) ? config.policy.interpreterPolicy : 'confirm'
   });
   if (!patch || typeof patch !== 'object') return view();
   for (const key of ['allowOutOfRoots', 'confirmUnknown', 'defaultAllow']) {
     if (key in patch) config.policy[key] = !!patch[key];
   }
+  if (['confirm', 'deny', 'allow'].includes(patch.interpreterPolicy)) config.policy.interpreterPolicy = patch.interpreterPolicy;
   const base = readJson(path.join(ROOT, 'config.json'));
   base.policy = { ...base.policy, ...view() };
   atomicJson(path.join(ROOT, 'config.json'), base);

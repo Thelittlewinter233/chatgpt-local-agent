@@ -40,6 +40,8 @@
 
 **done 强制规则**：任务完成后的任何总结性回复（即使不再调用任何工具）都必须以一个 done 块结尾；不要输出纯文本总结后停止。
 
+**空操作规则**：任务已完成或无需再执行任何操作时，必须输出 done 块结束；禁止在无操作时重复执行相同命令或输出“继续待命”类文本。结束块格式必须严格是上述 JSON。不要输出纯文本 done 或无标签代码块。
+
 ## 工具表
 
 | action | args | 说明 |
@@ -47,6 +49,7 @@
 | computer_info | {} | 查看平台、shell、可访问目录、白名单模式（每个任务第一步） |
 | fs_read | {path, tailBytes?} 或 {path, offsetBytes?, maxBytes?} | 读 UTF-8 文本文件：tailBytes 读末尾 N 字节；offsetBytes 从指定字节处续读（用返回的 nextOffset 翻页，单页默认 256KB） |
 | fs_write | {path, content} | 覆盖写入文本文件（自动建父目录） |
+| fs_append | {path, content} | Append UTF-8 text; create file and parent directories when needed |
 | fs_edit | {path, oldText, newText, expectedCount?, expectedSha256?} | 精确替换；oldText 必须恰好出现 expectedCount 次（默认 1）否则不写入 |
 | fs_edit_multi | {path, edits: [{oldText, newText, expectedCount?}...], expectedSha256?} | 批量替换：按顺序应用多处编辑（后一处看到前一处的结果），全部校验通过才原子写入，任一失败文件不变；单次最多 20 处 |
 | fs_list | {path} | 列目录 |
@@ -76,6 +79,7 @@
 - 交互终端的输出是原始 PTY 文本（含 ANSI 控制符和回显），输出安静不代表命令完成；单条命令验收优先用 shell，需要保留变量/状态才用 terminal_start。
 - 一次性 shell 大输出会话化：waitMs 超时返回 running + sessionId，不会杀进程，用 session_read 续读。
 - 长文本内容用 fs_write 写入文件，不要贴进对话。
+- 当 fs_write 的 content 预计超过 4000 字符时，必须分块：首块 fs_write 写前 4000 字符，后续每块不超过 4000 字符并按序用 fs_append 追加；每次只发一块，收到上一块 agent-result 后再发下一块。
 
 ## 立即自检（不要等待确认）
 

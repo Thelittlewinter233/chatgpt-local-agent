@@ -5,10 +5,20 @@ const store = {
 };
 
 let opts = { paused: false, autoSend: true, maxSteps: 30 };
-let guard = { step: 0, failStreak: 0, lastHash8: '' };
+const VOLATILE_KEYS = new Set(['id', 'pid', 'workerpid', 'sessionid', 'createdat', 'startedat', 'finishedat', 'ts', 'timestamp', 'time', 'durationms', 'cpums', 'nextoffset', 'hash8', 'for']);
+const freshGuard = () => ({ step: 0, failStreak: 0, lastHash8: '', loopSignature: '', loopCount: 0, loopCommandSignature: '', autoConcluded: false, noBlockStreak: 0, plainHintShown: false });
+const DONE_BLOCK_HINT = 'Output exactly this block to finish:\n\n```agent\n{\"action\":\"done\",\"args\":{\"summary\":\"task complete\"}}\n```';
+let guard = freshGuard();
 let seen = [];
 let lastResults = {};
 const respondedEls = new WeakSet();
+const fillAttempts = new WeakMap();
+const POLL_ACTIONS = new Set(['session_read', 'session_list']);
+const replayCounts = new Map();
+const rerunCounts = new Map();
+const REPLAY_MAX = 2;
+const RERUN_MAX = 1;
+const isDoneBlock = normalized => normalized.includes('"action":"done"');
 let processing = false;
 let cycleRunning = false;
 let cooldownUntil = 0;
@@ -16,19 +26,33 @@ let checkTimer = null;
 let lastDbgKey = '';
 let lastDriveHash = '';
 let lastDriveAt = 0;
+let fullSpeedTimers = false;
 const pendingFillHandlers = new Map();
 const recentDeliveries = new Map();
 let dbgTimeline = [];
 let dbgTabKey = 'x';
 let timelineFlushTimer = null;
 let myTabId = null;
+let writeSeq = 0;
+let probeDelta = { mutations: 0, addedNodes: 0, rafQueued: 0, rafExecuted: 0, hidreads: 0 };
+
+window.addEventListener('ab-probe', event => {
+  try {
+    const data = event.detail || {};
+    for (const key of Object.keys(probeDelta)) probeDelta[key] += Math.max(0, Number(data[key]) || 0);
+  } catch { }
+});
 
 const NOISY_STAGES = new Set(['no-agent-block-on-page', 'generating', 'block-already-seen', 'stability-wait', 'drive-check']);
 const PEND_MAX_AGE = 10 * 60 * 1000;
 const DELIVERY_DEDUP_MS = 60 * 1000;
+const MAX_FILL_ATTEMPTS = 3;
 
 const timelineKey = () => 'ab_dbg_timeline_' + dbgTabKey;
 const kaStateKey = () => 'ab_ka_' + dbgTabKey;
+const guardKey = () => 'ab_guard_' + dbgTabKey;
+const seenKey = () => 'ab_seen_' + dbgTabKey;
+const seqKey = () => 'ab_seq_' + dbgTabKey;
 
 function flushTimeline() {
   if (timelineFlushTimer) { clearTimeout(timelineFlushTimer); timelineFlushTimer = null; }
@@ -40,23 +64,23 @@ function queueTimelineFlush(immediate) {
   if (!timelineFlushTimer) timelineFlushTimer = setTimeout(flushTimeline, 1000);
 }
 
-function adoptTimelineKey(key) {
-  dbgTabKey = String(key);
-  flushTimeline();
-}
-
 function kaSet(state, code) {
   try { store.set({ [kaStateKey()]: { state, code: code == null ? null : code, ts: Date.now(), host: location.host } }); } catch { }
 }
 
 async function loadState() {
-  const o = await store.get(['ab_opts', 'ab_guard', 'ab_seen']);
+  const gk = guardKey();
+  const sk = seenKey();
+  const o = await store.get(['ab_opts', gk, sk, seqKey(), 'ab_guard', 'ab_seen', 'ab_state_migrated']);
   opts = Object.assign({ paused: false, autoSend: true, maxSteps: 30 }, o.ab_opts || {});
-  guard = Object.assign({ step: 0, failStreak: 0, lastHash8: '' }, o.ab_guard || {});
-  seen = o.ab_seen || [];
+  const adoptLegacy = dbgTabKey !== 'x' && !o.ab_state_migrated && o[gk] === undefined && o[sk] === undefined;
+  guard = Object.assign(freshGuard(), o[gk] || (adoptLegacy ? o.ab_guard : null) || {});
+  seen = o[sk] || (adoptLegacy ? o.ab_seen : null) || [];
+  writeSeq = Number(o[seqKey()]) || 0;
+  if (adoptLegacy) await store.set({ ab_state_migrated: Date.now() });
 }
 
-const saveState = () => store.set({ ab_opts: opts, ab_guard: guard, ab_seen: seen.slice(-300) });
+const saveState = () => store.set({ ab_opts: opts, [guardKey()]: guard, [seenKey()]: seen.slice(-300), [seqKey()]: ++writeSeq });
 const markSeen = key => { seen.push(key); if (seen.length > 500) seen = seen.slice(-300); saveState(); };
 
 async function dbg(stage, extra) {
@@ -84,6 +108,14 @@ const recentlyDelivered = hash8 => {
   return !!at && Date.now() - at < DELIVERY_DEDUP_MS;
 };
 
+function isStatusPoll(cmd, payload) {
+  if (!cmd || !POLL_ACTIONS.has(cmd.action)) return false;
+  const data = payload && payload.data;
+  if (!data || typeof data !== 'object') return false;
+  if (cmd.action === 'session_list') return Array.isArray(data.sessions) && data.sessions.some(s => s && s.status === 'running');
+  return data.status === 'running' || data.running === true;
+}
+
 async function takePend(key, hash8) {
   const o = await store.get('pend');
   const pend = o.pend || {};
@@ -102,6 +134,22 @@ async function sha1(text) {
   return [...new Uint8Array(buf)].map(b => b.toString(16).padStart(2, '0')).join('');
 }
 
+function stableJson(value) {
+  if (Array.isArray(value)) return '[' + value.map(stableJson).join(',') + ']';
+  if (value && typeof value === 'object') return '{' + Object.keys(value).sort().map(key => JSON.stringify(key) + ':' + stableJson(value[key])).join(',') + '}';
+  const text = JSON.stringify(value);
+  return text === undefined ? 'null' : text;
+}
+
+function stripVolatile(value) {
+  if (Array.isArray(value)) return value.map(stripVolatile);
+  if (value && typeof value === 'object') return Object.keys(value).reduce((result, key) => {
+    if (!VOLATILE_KEYS.has(key.toLowerCase())) result[key] = stripVolatile(value[key]);
+    return result;
+  }, {});
+  return value;
+}
+
 const q = sel => document.querySelector(sel);
 
 const ADAPTER = __AB_ADAPTER;
@@ -114,6 +162,27 @@ function cleanHeader(text) {
   return String(text || '').replace(/copy( code)?|复制代码|复制/gi, '').trim().toLowerCase();
 }
 
+function isBareDoneCandidate(el, block) {
+  const body = (el.textContent || '').trim();
+  if (body.toLowerCase() !== 'done') return false;
+  const container = el.closest?.('code, [class*="code-body" i]') || block || el;
+  return (container.textContent || '').trim().toLowerCase() === 'done';
+}
+
+const AGENT_CLASS_RE = /(^|[\s_/-])agent([\s_/-]|$)/i;
+
+function hasAgentClass(el) {
+  const cls = el ? (typeof el.className === 'string' ? el.className : String((el.getAttribute && el.getAttribute('class')) || '')) : '';
+  if (!cls || /agent-result/i.test(cls)) return false;
+  return AGENT_CLASS_RE.test(cls);
+}
+
+function preIsAgentFenced(pre, header) {
+  if (header === 'agent' || hasAgentClass(pre)) return true;
+  for (const el of pre.querySelectorAll('[class*="agent" i]')) if (hasAgentClass(el)) return true;
+  return false;
+}
+
 function codeBodyIfAgent(pre) {
   const header = cleanHeader(pre.querySelector('div, header, span')?.textContent);
   const candidates = [
@@ -124,28 +193,220 @@ function codeBodyIfAgent(pre) {
   for (const code of candidates) {
     const body = (code.textContent || '').trim();
     if (!body) continue;
+    if (body.toLowerCase() === 'done' && isBareDoneCandidate(code, pre) && preIsAgentFenced(pre, header)) return { code, body: '{"action":"done","args":{}}' };
     const tokens = [...(code.classList || [])];
     const isCodeEl = code.tagName === 'CODE';
-    if (tokens.includes('language-agent') || body.startsWith('{"action"') || (isCodeEl && header === 'agent')) return body;
+    if (tokens.includes('language-agent') || body.startsWith('{"action"') || (isCodeEl && header === 'agent')) return { code, body };
   }
   return null;
 }
 
-function findLatestAgentBlock() {
+const REBUILD_TTL = 5000;
+const REBUILD_DONE_TTL = 30000;
+const MAX_SCROLL_STEPS = 64;
+const HARD_SCROLL_STEPS = 512;
+const MAX_STEPS_PER_PASS = 32;
+const MAX_HEAD_RESETS = 4;
+const MAX_STALLS = 3;
+const MAX_REBUILD_PASSES = 6;
+const rebuildState = new WeakMap();
+
+const stepBudget = (max, step) => Math.min(HARD_SCROLL_STEPS, Math.max(MAX_SCROLL_STEPS, Math.ceil((max + step) / Math.max(1, step)) + 4));
+
+const parses = text => { try { JSON.parse(text); return true; } catch { return false; } };
+
+function suspectTruncated(body) {
+  const text = String(body || '').trim();
+  if (!text) return false;
+  if (text.startsWith('<')) return true;
+  if (!text.startsWith('{')) return false;
+  return !parses(text);
+}
+
+function horizontalScroller(el) {
+  let node = el;
+  let pad = 1;
+  while (node && node.nodeType === 1) {
+    if (node.clientWidth > 0 && node.scrollWidth > node.clientWidth + pad) return node;
+    node = node.parentElement;
+    pad = 10;
+  }
+  return null;
+}
+
+function overlapLength(base, next) {
+  const limit = Math.min(base.length, next.length);
+  if (limit <= 0) return 0;
+  const probe = next.slice(0, limit) + '\u0000' + base.slice(base.length - limit);
+  const fail = new Int32Array(probe.length);
+  let k = 0;
+  for (let i = 1; i < probe.length; i += 1) {
+    while (k > 0 && probe[i] !== probe[k]) k = fail[k - 1];
+    if (probe[i] === probe[k]) k += 1;
+    fail[i] = k;
+  }
+  return fail[probe.length - 1];
+}
+
+function overlapJoin(base, next) {
+  if (!next) return base;
+  if (!base) return next;
+  const k = overlapLength(base, next);
+  if (k >= next.length) return base;
+  if (k > 0) return base + next.slice(k);
+  const trimmed = base.replace(/\s+$/, '');
+  if (trimmed.length !== base.length) {
+    const k2 = overlapLength(trimmed, next);
+    if (k2 >= next.length) return trimmed;
+    if (k2 > 0) return trimmed + next.slice(k2);
+  }
+  if (base.length >= next.length && base.indexOf(next) >= 0) return base;
+  return base + next;
+}
+
+function mergeLines(target, text) {
+  const parts = String(text).split('\n');
+  for (let i = 0; i < parts.length; i += 1) {
+    if (i < target.length) target[i] = overlapJoin(target[i], parts[i]);
+    else target.push(parts[i]);
+  }
+}
+
+const taskYield = () => new Promise(resolve => {
+  let settled = false;
+  const finish = () => { if (!settled) { settled = true; resolve(); } };
+  try {
+    const channel = new MessageChannel();
+    channel.port1.onmessage = finish;
+    channel.port2.postMessage(0);
+  } catch { }
+  try { requestAnimationFrame(finish); } catch { }
+  setTimeout(finish, 60);
+});
+
+const nextPaint = async () => { await taskYield(); await taskYield(); };
+
+function notifyScroll(scroller) {
+  try { scroller.dispatchEvent(new Event('scroll', { bubbles: true })); } catch { }
+}
+
+function finishRebuild(st, scroller) {
+  const max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+  st.finished = st.pos > max || st.steps >= st.budget || (st.resets || 0) > MAX_HEAD_RESETS;
+  st.at = Date.now();
+  st.text = st.lines.join('\n').trim();
+  st.parseable = parses(st.text);
+  if (st.parseable && st.pieces > 1) dbg('rebuild-ok', 'pieces=' + st.pieces + ' len=' + st.text.length + ' steps=' + st.steps);
+  return st.text;
+}
+
+async function advanceRebuild(code, st, scroller) {
+  const origin = scroller.scrollLeft;
+  const step = Math.max(24, Math.floor(scroller.clientWidth * 0.8));
+  let max = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+  let pass = 1;
+  try {
+    scroller.scrollLeft = 0;
+    notifyScroll(scroller);
+    await nextPaint();
+    const head = code.textContent || '';
+    if (st.head === null || head !== st.head) {
+      st.lines = [];
+      st.head = head;
+      st.pos = step;
+      st.pieces = head ? 1 : 0;
+      st.stalls = 0;
+      st.lastText = '';
+      st.steps = 1;
+      st.passes = 1;
+      st.resets = (st.resets || 0) + 1;
+      st.budget = stepBudget(max, step);
+      pass = 1;
+      if (head) mergeLines(st.lines, head);
+    } else st.steps += 1;
+    if (max <= 0) return finishRebuild(st, scroller);
+    while (st.steps < st.budget && pass < MAX_STEPS_PER_PASS) {
+      const target = Math.min(st.pos, max);
+      scroller.scrollLeft = target;
+      notifyScroll(scroller);
+      await nextPaint();
+      pass += 1;
+      st.steps += 1;
+      const text = code.textContent || '';
+      if (text && text === st.lastText) {
+        st.stalls += 1;
+        if (st.stalls >= MAX_STALLS) break;
+      } else st.stalls = 0;
+      st.lastText = text;
+      if (text) { st.pieces += 1; mergeLines(st.lines, text); }
+      const live = Math.max(0, scroller.scrollWidth - scroller.clientWidth);
+      if (live > max) { max = live; st.budget = stepBudget(max, step); }
+      if (target >= max) { st.pos = max + 1; break; }
+      st.pos = Math.max(scroller.scrollLeft, target) + step;
+    }
+    return finishRebuild(st, scroller);
+  } finally {
+    try { scroller.scrollLeft = origin; } catch { }
+  }
+}
+
+async function readFullBody(code, initial) {
+  if (!code || !suspectTruncated(initial)) return initial;
+  const now = Date.now();
+  const cached = rebuildState.get(code);
+  if (cached && now - cached.at < (cached.parseable ? REBUILD_DONE_TTL : REBUILD_TTL)) return cached.text || initial;
+  const scroller = horizontalScroller(code);
+  if (!scroller) return initial;
+  let st = cached && cached.scroller === scroller && !cached.finished ? cached : null;
+  if (!st) {
+    st = { scroller, head: null, pos: 0, steps: 0, budget: MAX_SCROLL_STEPS, resets: 0, passes: 0, pieces: 0, stalls: 0, lastText: '', lines: [], text: '', at: 0, finished: false, parseable: false };
+    rebuildState.set(code, st);
+  }
+  st.passes += 1;
+  try {
+    return (await advanceRebuild(code, st, scroller)) || initial;
+  } catch {
+    st.at = Date.now();
+    st.finished = true;
+    return initial;
+  }
+}
+
+function peekRebuild(code) {
+  const st = code ? rebuildState.get(code) : null;
+  if (!st || !st.parseable || Date.now() - st.at >= REBUILD_DONE_TTL) return '';
+  return st.text;
+}
+
+function rebuildStats(code) {
+  const st = code ? rebuildState.get(code) : null;
+  return { pieces: st ? st.pieces : 0, len: st && st.text ? st.text.length : 0 };
+}
+
+function scanLatestAgentBlock() {
   let latest = null;
   for (const pre of document.querySelectorAll('pre')) {
-    const body = codeBodyIfAgent(pre);
-    if (!body) continue;
-    if (!latest || (latest.el.compareDocumentPosition(pre) & Node.DOCUMENT_POSITION_FOLLOWING)) latest = { el: pre, body };
+    const cand = codeBodyIfAgent(pre);
+    if (!cand) continue;
+    if (!latest || (latest.el.compareDocumentPosition(pre) & Node.DOCUMENT_POSITION_FOLLOWING)) latest = { el: pre, code: cand.code, body: cand.body };
   }
   for (const code of document.querySelectorAll('code')) {
     if (code.closest('pre')) continue;
     const body = (code.textContent || '').trim();
-    if (body.startsWith('{"action"') && body.endsWith('}')) {
-      if (!latest || (latest.el.compareDocumentPosition(code) & Node.DOCUMENT_POSITION_FOLLOWING)) latest = { el: code, body };
+    const bareDone = isBareDoneCandidate(code, code) && (hasAgentClass(code) || hasAgentClass(code.parentElement));
+    if (bareDone || (body.startsWith('{"action"') && body.endsWith('}'))) {
+      const normalized = bareDone ? '{"action":"done","args":{}}' : body;
+      if (!latest || (latest.el.compareDocumentPosition(code) & Node.DOCUMENT_POSITION_FOLLOWING)) latest = { el: code, code, body: normalized };
     }
   }
   return latest;
+}
+
+async function findLatestAgentBlock() {
+  const cand = scanLatestAgentBlock();
+  if (!cand) return null;
+  const body = await readFullBody(cand.code, cand.body);
+  return { el: cand.el, code: cand.code, body };
 }
 
 function scheduleCheck(delay = 350) {
@@ -153,41 +414,78 @@ function scheduleCheck(delay = 350) {
   checkTimer = setTimeout(checkCycle, delay);
 }
 
-
+async function noteNoBlock() {
+  guard.noBlockStreak += 1;
+  if (document.visibilityState === 'hidden' && fullSpeedTimers) {
+    try { const se = document.scrollingElement; if (se && se.scrollHeight - se.scrollTop - se.clientHeight > 40) { se.scrollTop = se.scrollHeight; notifyScroll(se); } } catch { }
+  }
+  if (guard.step > 0 && !guard.plainHintShown && guard.noBlockStreak >= 4) {
+    guard.plainHintShown = true;
+    await saveState();
+    dbg('plain-text-nudge', 'no-agent-block');
+    toast('AI 未输出 agent 块也未输出 done；若任务已完成可让它输出 done 块（格式见协议）');
+  }
+  dbg('no-agent-block-on-page');
+}
 
 async function checkCycle() {
-  if (document.visibilityState === 'hidden' || cycleRunning) return;
+  if (cycleRunning) return;
+  if (document.visibilityState === 'hidden' && !fullSpeedTimers) return;
   cycleRunning = true;
   try {
     if (processing || opts.paused) return;
     if (Date.now() < cooldownUntil) return;
-    if (isGenerating()) { dbg('generating'); return; }
-    const raw1 = findLatestAgentBlock();
-    if (!raw1) { dbg('no-agent-block-on-page'); return; }
+    if (isGenerating()) {
+      guard.noBlockStreak = 0;
+      dbg('generating');
+      return;
+    }
+    const raw1 = await findLatestAgentBlock();
+    if (!raw1) {
+      await noteNoBlock();
+      return;
+    }
     const normalized = raw1.body.trim();
     const hash8 = (await sha1(normalized)).slice(0, 8);
     const dedupKey = ADAPTER.id + ':' + hash8;
     if (seen.includes(dedupKey)) {
       if (respondedEls.has(raw1.el)) {
+        guard.noBlockStreak = 0;
+        if (document.visibilityState === 'hidden' && fullSpeedTimers && scrollChatToBottom(raw1.el)) dbg('chat-scroll-bottom', dedupKey);
         dbg('skip-responded-el', dedupKey);
         return;
       }
+      if (guard.noBlockStreak) {
+        guard.noBlockStreak = 0;
+        await saveState();
+      }
       const hit = lastResults[dedupKey];
-      if (hit && hit.payload && hit.payload.ok) {
-        dbg('replay-cached-new-el', dedupKey);
+      if (isDoneBlock(normalized)) { dbg('skip-done-replay', dedupKey); return; }
+      if (hit && hit.payload && (hit.payload.ok || hit.el === raw1.el)) {
+        const count = replayCounts.get(dedupKey) || 0;
+        if (count >= REPLAY_MAX) { dbg('skip-replay-cap', dedupKey); return; }
+        replayCounts.set(dedupKey, count + 1);
+        dbg(hit.payload.ok ? 'replay-cached-new-el' : 'refill-same-el', dedupKey);
         processing = true;
         try { await respond(hash8, hit.payload, raw1.el); } finally { processing = false; }
         return;
       }
+      const rerunCount = rerunCounts.get(dedupKey) || 0;
+      if (rerunCount >= RERUN_MAX) { dbg('skip-rerun-cap', dedupKey); return; }
+      rerunCounts.set(dedupKey, rerunCount + 1);
       dbg('rerun-seen-new-el', dedupKey);
       processing = true;
       try { await handleBlock(normalized, dedupKey, hash8, raw1.el); }
       finally { processing = false; }
       return;
     }
+    if (guard.noBlockStreak) {
+      guard.noBlockStreak = 0;
+      await saveState();
+    }
     await sleep(600);
     if (isGenerating()) return;
-    const raw2 = findLatestAgentBlock();
+    const raw2 = await findLatestAgentBlock();
     if (!raw2 || raw2.body.trim() !== normalized) { dbg('stability-wait'); scheduleCheck(1000); return; }
     dbg('agent-block-detected', normalized.slice(0, 80));
     processing = true;
@@ -200,7 +498,89 @@ async function checkCycle() {
   finally { cycleRunning = false; }
 }
 
+let rebuildFlight = false;
+
+function scrollChatToBottom(el) {
+  try {
+    let node = el;
+    while (node && node.nodeType === 1) {
+      if (node.clientHeight > 150 && node.scrollHeight > node.clientHeight + 50) {
+        if (node.scrollHeight - node.scrollTop - node.clientHeight > 40) {
+          node.scrollTop = node.scrollHeight;
+          node.dispatchEvent(new Event('scroll', { bubbles: true }));
+          return true;
+        }
+        return false;
+      }
+      node = node.parentElement;
+    }
+  } catch { }
+  return false;
+}
+
+async function driveTriggerBlock(block, tag) {
+  const normalized = String(block.body || '').trim();
+  const hash = await sha1(normalized);
+  const hash8 = hash.slice(0, 8);
+  const dedupKey = ADAPTER.id + ':' + hash8;
+  dbg(tag, hash8 + ' len=' + normalized.length + ' seen=' + seen.includes(dedupKey));
+  if (seen.includes(dedupKey)) {
+    if (document.visibilityState === 'hidden' && scrollChatToBottom(block.el)) dbg('chat-scroll-bottom', dedupKey);
+    if (respondedEls.has(block.el)) {
+      dbg('skip-responded-el', dedupKey);
+      return;
+    }
+    if (isDoneBlock(normalized)) { dbg('skip-done-replay', dedupKey); return; }
+    const hit = lastResults[dedupKey];
+    if (hit && hit.payload && hit.payload.ok) {
+      const count = replayCounts.get(dedupKey) || 0;
+      if (count >= REPLAY_MAX) { dbg('skip-replay-cap', dedupKey); return; }
+      replayCounts.set(dedupKey, count + 1);
+      dbg('replay-cached-new-el', dedupKey);
+      await respond(hash8, hit.payload, block.el);
+      return;
+    }
+    const rerunCount = rerunCounts.get(dedupKey) || 0;
+    if (rerunCount >= RERUN_MAX) { dbg('skip-rerun-cap', dedupKey); return; }
+    rerunCounts.set(dedupKey, rerunCount + 1);
+    dbg('rerun-seen-new-el', dedupKey);
+    await handleBlock(normalized, dedupKey, hash8, block.el);
+    return;
+  }
+  dbg('agent-block-detected', normalized.slice(0, 80));
+  await handleBlock(normalized, dedupKey, hash8, block.el);
+}
+
+async function driveRebuild(cand) {
+  if (rebuildFlight || processing || cycleRunning) return;
+  rebuildFlight = true;
+  try {
+    const full = String((await readFullBody(cand.code, cand.body)) || cand.body).trim();
+    if (!parses(full)) {
+      const stats = rebuildStats(cand.code);
+      const st = rebuildState.get(cand.code);
+      if (st && !st.finished && (st.passes || 0) < MAX_REBUILD_PASSES) dbg('rebuild-partial', 'pieces=' + stats.pieces + ' len=' + full.length + ' steps=' + st.steps + '/' + st.budget);
+      else dbg('rebuild-failed', 'pieces=' + stats.pieces + ' len=' + full.length + ' steps=' + (st ? st.steps : 0));
+      dbg('stabilizing', 'len=' + full.length + ' head=' + full.slice(0, 60));
+      return;
+    }
+    processing = true;
+    try { await driveTriggerBlock({ el: cand.el, body: full }, 'drive-rebuild-triggered'); }
+    finally { processing = false; }
+  } catch (e) {
+    dbg('check-error', String((e && e.stack) || e));
+    toast('AgentBridge 检测出错：' + String((e && e.message) || e));
+  } finally {
+    rebuildFlight = false;
+  }
+}
+
 function driveCheck(source) {
+  const probe = probeDelta;
+  probeDelta = { mutations: 0, addedNodes: 0, rafQueued: 0, rafExecuted: 0, hidreads: 0 };
+  dbgTimeline.push({ stage: 'probe', extra: `mut=${probe.mutations}/${probe.addedNodes} raf=${probe.rafQueued}/${probe.rafExecuted} hidreads=${probe.hidreads}`, ts: Date.now(), host: location.host });
+  if (dbgTimeline.length > 60) dbgTimeline = dbgTimeline.slice(-50);
+  queueTimelineFlush(false);
   if (!ADAPTER) return 'no-adapter';
   if (kaWs && kaWs.readyState === WebSocket.OPEN) {
     try { kaWs.send(JSON.stringify({ type: 'ping' })); } catch { restartKeepAlive(); }
@@ -214,44 +594,37 @@ function driveCheck(source) {
   else if (Date.now() < cooldownUntil) out = 'cooldown';
   else if (source === 'execute-script') {
     if (isGenerating()) {
-      lastDriveHash = '';
       out = 'generating';
     } else {
-      const block = findLatestAgentBlock();
-      if (!block) {
-        lastDriveHash = '';
+      const cand = scanLatestAgentBlock();
+      if (!cand) {
+        if (document.visibilityState === 'hidden') {
+          try { const se = document.scrollingElement; if (se && se.scrollHeight - se.scrollTop - se.clientHeight > 40) { se.scrollTop = se.scrollHeight; notifyScroll(se); dbg('chat-scroll-bottom', 'doc'); } } catch { }
+        }
         out = 'no-block';
       } else {
-        const normalized = block.body.trim();
+        const rebuilt = peekRebuild(cand.code);
+        const normalized = (rebuilt || cand.body).trim();
+        const complete = parses(normalized);
+        const rb = rebuildState.get(cand.code);
+        const exhausted = !!rb && !rb.parseable && (rb.finished || (rb.passes || 0) >= MAX_REBUILD_PASSES);
         const now = Date.now();
         const stable = normalized === lastDriveHash && now - lastDriveAt >= 25000;
         lastDriveHash = normalized;
         lastDriveAt = now;
-        if (!stable) out = 'stabilizing';
-        else {
+        if (!complete && !exhausted && suspectTruncated(normalized)) {
+          out = 'rebuilding';
+          try { cand.el.scrollIntoView({ block: 'center', behavior: 'instant' }); } catch { }
+          dbg('rebuild-start', 'len=' + normalized.length + ' head=' + normalized.slice(0, 60));
+          driveRebuild(cand);
+        } else if (!complete && !stable) {
+          out = 'stabilizing';
+          try { cand.el.scrollIntoView({ block: 'center', behavior: 'instant' }); } catch { }
+          dbg('stabilizing', 'len=' + normalized.length + ' head=' + normalized.slice(0, 60));
+        } else {
           processing = true;
           out = 'triggered';
-          sha1(normalized).then(async hash => {
-            const hash8 = hash.slice(0, 8);
-            const dedupKey = ADAPTER.id + ':' + hash8;
-            if (seen.includes(dedupKey)) {
-              if (respondedEls.has(block.el)) {
-                dbg('skip-responded-el', dedupKey);
-                return;
-              }
-              const hit = lastResults[dedupKey];
-              if (hit && hit.payload && hit.payload.ok) {
-                dbg('replay-cached-new-el', dedupKey);
-                await respond(hash8, hit.payload, block.el);
-                return;
-              }
-              dbg('rerun-seen-new-el', dedupKey);
-              await handleBlock(normalized, dedupKey, hash8, block.el);
-              return;
-            }
-            dbg('agent-block-detected', normalized.slice(0, 80));
-            await handleBlock(normalized, dedupKey, hash8, block.el);
-          }).catch(e => {
+          driveTriggerBlock({ el: cand.el, body: normalized }, 'drive-triggered').catch(e => {
             dbg('check-error', String((e && e.stack) || e));
             toast('AgentBridge 检测出错：' + String((e && e.message) || e));
           }).finally(() => { processing = false; });
@@ -343,6 +716,20 @@ async function runCmd(hash8, cmd) {
   }
 }
 
+function flattenArgs(cmd) {
+  if (!cmd || typeof cmd !== 'object') return cmd;
+  if (cmd.args && typeof cmd.args === 'object' && !Array.isArray(cmd.args)) return cmd;
+  const rest = {};
+  let has = false;
+  for (const key of Object.keys(cmd)) {
+    if (key === 'action' || key === 'args') continue;
+    rest[key] = cmd[key];
+    has = true;
+  }
+  if (has) return Object.assign({}, cmd, { args: rest });
+  return Object.assign({}, cmd, { args: {} });
+}
+
 async function handleBlock(raw, key, hash8, el) {
   let cmd;
   try { cmd = JSON.parse(raw); }
@@ -363,8 +750,9 @@ async function handleBlock(raw, key, hash8, el) {
     await respond(hash8, { ok: false, error: 'agent block missing action' }, el);
     return;
   }
+  cmd = flattenArgs(cmd);
   if (cmd.action === 'done') {
-    guard = { step: 0, failStreak: 0, lastHash8: '' };
+    guard = freshGuard();
     markSeen(key);
     saveState();
     toast('AgentBridge: 任务完成，计数已重置');
@@ -372,7 +760,7 @@ async function handleBlock(raw, key, hash8, el) {
   }
   const pendHit = await takePend(key, hash8);
   if (pendHit) {
-    await deliver(key, hash8, pendHit.payload, el);
+    await deliver(key, hash8, pendHit.payload, el, null, false);
     return;
   }
   const limit = Math.min(Math.max(Number(opts.maxSteps) || 30, 10), 100);
@@ -388,6 +776,18 @@ async function handleBlock(raw, key, hash8, el) {
     await respond(hash8, { ok: false, denied: 'circuit breaker: 3 consecutive failures; check the agent server, then press New Task' }, el);
     return;
   }
+  const commandSignature = await sha1(stableJson({ action: cmd.action, args: cmd.args || {} }));
+  if (guard.autoConcluded && commandSignature !== guard.loopCommandSignature) guard.autoConcluded = false;
+  if (guard.autoConcluded) {
+    markSeen(key);
+    guard.step += 1;
+    const concluded = { ok: false, denied: 'task auto-concluded after repeated no-op commands; this command was not executed. Send a new instruction to start something new. ' + DONE_BLOCK_HINT };
+    dbg('loop-blocked', cmd.action);
+    cacheResult(key, concluded, el);
+    await saveState();
+    await respond(hash8, concluded, el);
+    return;
+  }
   markSeen(key);
   toast('AgentBridge: 执行 ' + cmd.action + ' …');
   let payload;
@@ -401,24 +801,55 @@ async function handleBlock(raw, key, hash8, el) {
     catch (e) { payload = { ok: false, error: 'bridge unavailable: ' + ((e && e.message) || e) }; }
   }
   dbg('cmd-done', cmd.action + ' -> ' + JSON.stringify(payload).slice(0, 120));
-  await deliver(key, hash8, payload, el);
+  await deliver(key, hash8, payload, el, cmd, true, commandSignature);
 }
 
-async function deliver(key, hash8, payload, el) {
+async function deliver(key, hash8, payload, el, cmd, trackLoop, priorSignature) {
+  let delivered = payload;
+  let loopFlagged = false;
+  if (trackLoop && cmd && !isStatusPoll(cmd, payload)) {
+    const commandSignature = priorSignature || await sha1(stableJson({ action: cmd.action, args: cmd.args || {} }));
+    const signature = commandSignature + ':' + await sha1(stableJson(stripVolatile(payload)));
+    dbg('loop-sig', signature.slice(0, 24));
+    if (guard.loopSignature === signature) guard.loopCount += 1;
+    else { guard.loopSignature = signature; guard.loopCount = 1; guard.autoConcluded = false; }
+    if (guard.loopCount >= 3) {
+      delivered = { ok: false, denied: 'task auto-concluded after repeated no-op commands; further identical commands will not be executed. Send a new instruction to start something new. ' + DONE_BLOCK_HINT };
+      loopFlagged = true;
+      guard.autoConcluded = true;
+      guard.loopCommandSignature = commandSignature;
+      dbg('loop-auto-stop', signature.slice(0, 24));
+      toast('AgentBridge: 检测到空转循环，任务已自动结束');
+    } else if (guard.loopCount >= 2) {
+      delivered = { ok: false, denied: 'loop detected: the same command returned the same result twice with no progress. If the task is complete, output the done block now. Otherwise change approach and explain why. ' + DONE_BLOCK_HINT };
+      loopFlagged = true;
+      dbg('loop-nudge', signature.slice(0, 24));
+      toast('AgentBridge: 检测到重复无进展，已提醒模型输出 done 或改变方法');
+    }
+  }
+  const effective = loopFlagged ? payload : delivered;
   guard.step += 1;
-  guard.failStreak = payload && payload.ok ? 0 : guard.failStreak + 1;
+  guard.failStreak = effective && effective.ok ? 0 : guard.failStreak + 1;
   guard.lastHash8 = key;
-  cacheResult(key, payload, el);
+  cacheResult(key, delivered, el);
   await saveState();
-  await respond(hash8, payload, el);
+  await respond(hash8, delivered, el);
 }
 
 async function respond(hash8, payload, el) {
+  let filled = false;
   try {
   const text = '```agent-result\n' + buildResultBody(hash8, payload) + '\n```';
   dbg('fill-start', hash8);
-  const filled = await ADAPTER.insertText(text);
-  if (!filled) { dbg('fill-failed', hash8); toast('AgentBridge: 回填失败（找不到输入框），请手动把结果发给 AI'); return; }
+  filled = await ADAPTER.insertText(text);
+  if (!filled) {
+    const attempts = ((el && fillAttempts.get(el)) || 0) + 1;
+    if (el) fillAttempts.set(el, attempts);
+    cooldownUntil = Date.now() + 5000;
+    dbg('fill-failed', hash8 + ' attempt=' + attempts);
+    if (attempts >= MAX_FILL_ATTEMPTS) toast('AgentBridge: 回填连续失败（找不到输入框），请手动把结果发给 AI');
+    return;
+  }
   dbg('fill-done', hash8);
   const o = await store.get('ab_opts');
   const current = Object.assign({ paused: false, autoSend: true, maxSteps: 30 }, o.ab_opts || {});
@@ -429,7 +860,7 @@ async function respond(hash8, payload, el) {
   else { dbg('send-done', hash8); highlight(false); }
   cooldownUntil = Date.now() + 5000;
   } finally {
-    if (el) respondedEls.add(el);
+    if (el && (filled || (fillAttempts.get(el) || 0) >= MAX_FILL_ATTEMPTS)) respondedEls.add(el);
   }
 }
 
@@ -618,6 +1049,10 @@ async function injectProtocol() {
 }
 
 async function init() {
+  try {
+    const r = await chrome.runtime.sendMessage({ type: 'content-hello' });
+    if (r && r.tabId != null) { myTabId = String(r.tabId); dbgTabKey = myTabId; }
+  } catch { }
   await loadState();
   if (!ADAPTER) {
     dbg('no-adapter-for-this-site', location.host);
@@ -630,15 +1065,7 @@ async function init() {
     }
   }, true);
   acquireKeepAliveLock();
-  (async () => {
-    let tabId = null;
-    try {
-      const r = await chrome.runtime.sendMessage({ type: 'content-hello' });
-      if (r && r.tabId != null) tabId = String(r.tabId);
-    } catch { }
-    if (tabId) { myTabId = tabId; adoptTimelineKey(tabId); }
-    startKeepAlive(tabId);
-  })();
+  startKeepAlive(myTabId);
   new MutationObserver(() => scheduleCheck()).observe(document.body, { subtree: true, childList: true, characterData: true });
   document.addEventListener('visibilitychange', () => {
     dbg(document.hidden ? 'page-hidden' : 'page-visible');
@@ -684,7 +1111,7 @@ async function init() {
         inputFound: !!ADAPTER.findInput(),
         generating: isGenerating(),
         codeBlocks: document.querySelectorAll('pre code').length,
-        agentBlocks: !!findLatestAgentBlock(),
+        agentBlocks: !!scanLatestAgentBlock(),
         seen: seen.length,
         step: guard.step,
         failStreak: guard.failStreak
@@ -701,16 +1128,30 @@ async function init() {
     if (area !== 'local') return;
     if (changes.token || changes.serverUrl) restartKeepAlive();
     if (changes.ab_opts) opts = Object.assign({ paused: false, autoSend: true, maxSteps: 30 }, changes.ab_opts.newValue || {});
-    if (changes.ab_seen) seen = changes.ab_seen.newValue || [];
-    if (changes.ab_guard) guard = Object.assign({ step: 0, failStreak: 0, lastHash8: '' }, changes.ab_guard.newValue || {});
+    const seenChange = changes[seenKey()] || changes.ab_seen;
+    if (seenChange) seen = seenChange.newValue || [];
+    const guardChange = changes[guardKey()] || changes.ab_guard;
+    if (guardChange) {
+      const echo = changes[seqKey()] && Number(changes[seqKey()].newValue) === writeSeq;
+      if (!echo) guard = Object.assign(freshGuard(), guardChange.newValue || {});
+    }
     if (changes.resetGuard) {
-      guard = { step: 0, failStreak: 0, lastHash8: '' };
-      seen = [];
-      saveState();
-      toast('AgentBridge: 新任务，计数已重置');
+      const reset = changes.resetGuard.newValue;
+      if (!reset || typeof reset !== 'object' || reset.tab == null || String(reset.tab) === String(myTabId)) {
+        guard = freshGuard();
+        seen = [];
+        saveState();
+        toast('AgentBridge: 新任务，计数已重置');
+      }
     }
   });
   dbg('content-script-active', ADAPTER.id + '@' + location.host);
+  (async () => {
+    const t0 = Date.now();
+    for (let i = 0; i < 4; i += 1) await sleep(250);
+    fullSpeedTimers = Date.now() - t0 < 1500;
+    dbg('timer-drift', fullSpeedTimers ? 'full-speed' : 'throttled');
+  })();
   scheduleCheck(500);
 }
 

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { createHash } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { checkPathResolved as checkPath } from './policy.mjs';
 import { replaceFile } from './engine/common.mjs';
 
@@ -8,6 +8,14 @@ const hash = data => createHash('sha256').update(data).digest('hex');
 const MAX_READ = 256 * 1024;
 const MAX_TREE_ENTRIES = 500;
 const MAX_SEARCH_RESULTS = 200;
+const MAX_LIST_ENTRIES = 2000;
+const MAX_GREP_FILES = 2000;
+const MAX_PATTERN_LENGTH = 1000;
+const MAX_GREP_LINE = 4000;
+const MAX_GREP_FILE_BYTES = 2 * 1024 * 1024;
+const GREP_TIME_BUDGET_MS = 5000;
+
+const tempName = base => `${base}.agent-${process.pid}-${randomUUID()}.tmp`;
 
 function assertText(buffer) {
   const probe = buffer.subarray(0, 8192);
@@ -35,7 +43,7 @@ function atomicWrite(config, file, before, buffer, bypassRoots) {
   if (!bypassRoots && realTarget.toLowerCase() !== target.toLowerCase()) {
     checkPath(config, realTarget, false);
   }
-  const temp = `${realTarget}.agent-${process.pid}.tmp`;
+  const temp = tempName(realTarget);
   try {
     fs.writeFileSync(temp, buffer, { mode: fs.statSync(realTarget).mode });
     if (hash(fs.readFileSync(realTarget)) !== hash(before)) throw new Error('File changed during edit; retry after reading');
@@ -90,6 +98,15 @@ export function createFsTools(config) {
     return { path: file, bytes: buffer.length, sha256: hash(buffer) };
   }
 
+  async function append(args, ctx) {
+    const file = checkPath(config, args.path, ctx && ctx.bypassRoots);
+    if (typeof args.content !== 'string') throw new Error('content must be a string');
+    fs.mkdirSync(path.dirname(file), { recursive: true });
+    const buffer = Buffer.from(args.content, 'utf8');
+    fs.appendFileSync(file, buffer);
+    return { path: file, bytes: buffer.length, sha256: hash(buffer) };
+  }
+
   async function edit(args, ctx) {
     const bypass = !!(ctx && ctx.bypassRoots);
     const file = checkPath(config, args.path, bypass);
@@ -132,9 +149,9 @@ export function createFsTools(config) {
 
   async function list(args, ctx) {
     const dir = checkPath(config, args.path, ctx && ctx.bypassRoots);
-    const entries = fs.readdirSync(dir, { withFileTypes: true })
+    const all = fs.readdirSync(dir, { withFileTypes: true })
       .map(e => ({ name: e.name, type: e.isDirectory() ? 'dir' : e.isFile() ? 'file' : 'other' }));
-    return { path: dir, entries };
+    return { path: dir, entries: all.slice(0, MAX_LIST_ENTRIES), total: all.length, truncated: all.length > MAX_LIST_ENTRIES };
   }
 
   async function tree(args, ctx) {
@@ -195,6 +212,7 @@ export function createFsTools(config) {
   async function grep(args, ctx) {
     const root = checkPath(config, args.path, ctx && ctx.bypassRoots);
     if (typeof args.pattern !== 'string' || !args.pattern) throw new Error('pattern is required');
+    if (args.pattern.length > MAX_PATTERN_LENGTH) throw new Error(`pattern exceeds ${MAX_PATTERN_LENGTH} characters`);
     let re;
     try { re = new RegExp(args.pattern, args.ignoreCase ? 'i' : ''); }
     catch (e) { throw new Error(`Invalid regex: ${e.message}`); }
@@ -202,9 +220,14 @@ export function createFsTools(config) {
     const max = Math.min(Math.max(Number(args.maxResults) || 100, 1), MAX_SEARCH_RESULTS);
     const matches = [];
     let truncated = false;
+    let scanned = 0;
+    let budgetExceeded = false;
+    const startedAt = Date.now();
+    const overBudget = () => Date.now() - startedAt > GREP_TIME_BUDGET_MS;
     const walk = dir => {
       for (const e of fs.readdirSync(dir, { withFileTypes: true })) {
-        if (matches.length >= max) { truncated = true; return; }
+        if (matches.length >= max || scanned >= MAX_GREP_FILES) { truncated = true; return; }
+        if (overBudget()) { truncated = true; budgetExceeded = true; return; }
         const full = path.join(dir, e.name);
         if (e.isDirectory()) {
           if (!e.isSymbolicLink() && !e.name.startsWith('.') && e.name !== 'node_modules') walk(full);
@@ -214,10 +237,14 @@ export function createFsTools(config) {
         if (nameRe && !nameRe.test(e.name)) continue;
         let buf;
         try { buf = fs.readFileSync(full); } catch { continue; }
-        if (buf.length > 2 * 1024 * 1024 || buf.subarray(0, 8192).includes(0)) continue;
+        scanned += 1;
+        if (scanned > MAX_GREP_FILES) { truncated = true; return; }
+        if (buf.length > MAX_GREP_FILE_BYTES || buf.subarray(0, 8192).includes(0)) continue;
         const lines = buf.toString('utf8').split(/\r?\n/);
         for (let i = 0; i < lines.length; i++) {
-          if (re.test(lines[i])) {
+          if ((i & 255) === 0 && overBudget()) { truncated = true; budgetExceeded = true; break; }
+          const line = lines[i].length > MAX_GREP_LINE ? lines[i].slice(0, MAX_GREP_LINE) : lines[i];
+          if (re.test(line)) {
             matches.push({ file: full, line: i + 1, text: lines[i].slice(0, 500) });
             if (matches.length >= max) { truncated = true; break; }
           }
@@ -225,7 +252,7 @@ export function createFsTools(config) {
       }
     };
     walk(root);
-    return { path: root, pattern: args.pattern, glob: args.glob || null, matches, truncated };
+    return { path: root, pattern: args.pattern, glob: args.glob || null, matches, truncated, scannedFiles: Math.min(scanned, MAX_GREP_FILES), timeBudgetExceeded: budgetExceeded };
   }
 
   async function move(args, ctx) {
@@ -233,7 +260,7 @@ export function createFsTools(config) {
     const to = checkPath(config, args.to, ctx && ctx.bypassRoots);
     fs.mkdirSync(path.dirname(to), { recursive: true });
     if (fs.existsSync(to)) throw new Error(`Target already exists: ${to}`);
-    const temp = `${to}.agent-move-${process.pid}.tmp`;
+    const temp = `${to}.agent-move-${process.pid}-${randomUUID()}.tmp`;
     fs.renameSync(from, temp);
     try { replaceFile(temp, to); }
     catch (e) { try { fs.renameSync(temp, from); } catch { } ; throw e; }
@@ -263,5 +290,5 @@ export function createFsTools(config) {
     return { path: file, deleted: true };
   }
 
-  return { read, write, edit, editMulti, list, tree, search, glob, grep, move, mkdir, info, del };
+  return { read, write, append, edit, editMulti, list, tree, search, glob, grep, move, mkdir, info, del };
 }

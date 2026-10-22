@@ -34,9 +34,9 @@ test('checkCommand denies blacklisted commands', () => {
 });
 
 test('checkCommand denies non-whitelisted heads when whitelist mode is on', () => {
-  assert.throws(() => checkCommand(config, 'curl https://example.com', undefined), /not whitelisted/);
-  assert.throws(() => checkCommand(config, 'powershell -Command "x"', undefined), /not whitelisted/);
-  assert.throws(() => checkCommand(config, 'if ($true) { node -v }', undefined), /not whitelisted/);
+  assert.deepEqual(checkCommand(config, 'curl https://example.com', undefined), { ok: true, needConfirm: true, head: 'curl' });
+  assert.deepEqual(checkCommand(config, 'powershell -Command "x"', undefined), { ok: true, needConfirm: true, head: 'powershell' });
+  assert.deepEqual(checkCommand(config, 'if ($true) { node -v }', undefined), { ok: true, needConfirm: true, head: 'if' });
 });
 
 test('checkCommand enforces length limit', () => {
@@ -50,10 +50,9 @@ test('checkCommand skips whitelist when defaultAllow is on but keeps blacklist',
   assert.throws(() => checkCommand(cfg, 'format q:', undefined), e => e.denied === true);
 });
 
-test('checkCommand skips whitelist deny when allowOutOfRoots is on', () => {
+test('allowOutOfRoots enables full command approval while blacklist still wins', () => {
   const cfg = { ...config, policy: { ...config.policy, confirmUnknown: false, allowOutOfRoots: true } };
   assert.deepEqual(checkCommand(cfg, 'curl https://example.com', undefined), { ok: true });
-  assert.throws(() => checkCommand({ ...config, policy: { ...config.policy, confirmUnknown: false } }, 'curl https://example.com', undefined), /not whitelisted/);
   assert.throws(() => checkCommand(cfg, 'format q:', undefined), e => e.denied === true);
 });
 
@@ -70,4 +69,41 @@ test('classifyCommand still hard-denies unknown heads when confirmUnknown is off
   const cfg = { ...config, policy: { defaultAllow: false, confirmUnknown: false, whitelist: ['node'] } };
   const verdict = classifyCommand(cfg, 'Get-Date', undefined);
   assert.equal(verdict.kind, 'deny');
+});
+
+
+test('quoted separators do not split commands', () => {
+  const cfg = { ...config, policy: { ...config.policy, whitelist: ['echo'] } };
+  assert.equal(classifyCommand(cfg, 'echo "left; right | still one"', undefined).kind, 'ok');
+  assert.equal(classifyCommand(cfg, 'echo left; git status', undefined).kind, 'confirm');
+});
+
+test('command substitutions are checked and bounded', () => {
+  const cfg = { ...config, policy: { ...config.policy, whitelist: ['echo'] } };
+  assert.equal(classifyCommand(cfg, 'echo $(echo $(echo safe))', undefined).kind, 'ok');
+  assert.equal(classifyCommand(cfg, 'echo ${value:-$(curl bad)}', undefined).kind, 'confirm');
+  const eightLevels = 'echo ' + '$(echo '.repeat(7) + 'safe' + ')'.repeat(7);
+  assert.equal(classifyCommand(cfg, eightLevels, undefined).kind, 'ok');
+  assert.equal(classifyCommand(cfg, 'echo $(curl bad)', undefined).kind, 'confirm');
+  assert.equal(classifyCommand(cfg, 'echo $(echo', undefined).kind, 'deny');
+  assert.equal(classifyCommand(cfg, 'echo $( $( $( $( $( $( $( $( $(echo x)))))))))', undefined).kind, 'deny');
+});
+
+test('full approval mode bypasses unknown and inline interpreter confirmation', () => {
+  const cfg = { ...config, policy: { ...config.policy, allowOutOfRoots: true, confirmUnknown: false, whitelist: ['node', 'python', 'powershell', 'cmd'] } };
+  assert.equal(classifyCommand(cfg, 'curl https://example.com', undefined).kind, 'ok');
+  assert.equal(classifyCommand(cfg, 'node -e "1"', undefined).kind, 'ok');
+  assert.equal(classifyCommand({ ...cfg, policy: { ...cfg.policy, interpreterPolicy: 'deny' } }, 'node -e "1"', undefined).kind, 'deny');
+});
+
+test('confirmation mode controls unknown and inline interpreter commands', () => {
+  const cfg = { ...config, policy: { ...config.policy, allowOutOfRoots: false, confirmUnknown: true, whitelist: ['node', 'python', 'powershell', 'cmd'] } };
+  assert.equal(classifyCommand(cfg, 'curl https://example.com', undefined).kind, 'confirm');
+  assert.equal(classifyCommand(cfg, 'node -e "1"', undefined).kind, 'confirm');
+  assert.equal(classifyCommand({ ...cfg, policy: { ...cfg.policy, interpreterPolicy: 'deny' } }, 'node -e "1"', undefined).kind, 'deny');
+});
+
+test('interpreter allow mode bypasses confirmation in confirmation mode', () => {
+  const cfg = { ...config, policy: { ...config.policy, allowOutOfRoots: false, interpreterPolicy: 'allow', whitelist: ['node'] } };
+  assert.equal(classifyCommand(cfg, 'node --eval 1', undefined).kind, 'ok');
 });
