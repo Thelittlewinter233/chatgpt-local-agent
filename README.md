@@ -186,7 +186,7 @@ AI 只需要会一件事：输出如下代码块，然后停下等结果。
 ​```​
 ```
 
-全部动作见 [docs/chat-prompt.md](docs/chat-prompt.md) 的工具表：文件读写/精确编辑/目录树/文件名搜索、一次性 shell（wait/detach）、持久交互终端（`terminal_start` + `session_write`/`session_read`/`session_interrupt`/`session_resize`）。输出被截断时结果自带 `hint` 和 `nextOffset`，AI 据此分段续读。
+全部动作见 [docs/chat-prompt.md](docs/chat-prompt.md) 的工具表：文件读写/追加（fs_write/fs_append）/精确编辑/目录树/文件名搜索、一次性 shell（wait/detach）、持久交互终端（`terminal_start` + `session_write`/`session_read`/`session_interrupt`/`session_resize`）。输出被截断时结果自带 `hint` 和 `nextOffset`，AI 据此分段续读。大文件（content 超 4000 字符）协议要求拆为 fs_write 首块 + fs_append 按序追加——部分站点（Qwen/DeepSeek）对超长代码块做分页/虚拟化渲染，小块才能被可靠读取。
 
 ### 5.4 典型场景示例
 
@@ -245,22 +245,25 @@ Chrome 默认对隐藏标签做三层限制（定时器节流 → 整页冻结 �
 
 | 方案 | 操作 | 后台速度 | 适用 |
 |---|---|---|---|
+| 专属 Chrome（推荐） | 双击 `start-agent-chrome.bat`，**放在后台被覆盖（别点最小化）** | **与前台完全一致** | 经常后台跑任务 |
+| 小窗加速 | popup 点「小窗加速」把 AI 标签弹成独立小窗，**别最小化小窗** | 接近前台 | 临时加速单个标签 / 在专属 Chrome 里浏览其他网页时 |
 | 内置兜底（默认生效，零配置） | 无需任何操作 | 每步约 1–4 分钟 | 挂机跑不急的长任务 |
-| 小窗加速 | popup 点「小窗加速」把 AI 标签弹成独立小窗 | 接近前台 | 临时加速单个标签 |
-| 专属 Chrome（推荐） | 双击 `start-agent-chrome.bat` | **与前台完全一致** | 经常后台跑任务 |
 
-**内置兜底（默认就有）**：每个标签自持 keep-alive WebSocket（豁免页面冻结）+ 扩展后台每 30 秒注入一次检测驱动（不受页面定时器节流影响）+ 结果补投递。即使最小化 Chrome 过夜，任务也会持续推进，只是受站点自身渲染节流影响，每步比前台慢。popup 诊断详情里的 keepalive 状态、驱动日志、事件时间线可随时确认后台链路是否健康；服务端日志在 `server/runtime/ws.log`。
+> ⚠️ **重要**：由于网页 AI 站点的渲染机制差异（Qwen/DeepSeek 等在标签不可见时会整体暂停 DOM 渲染），**后台运行时永远不要点最小化**——被其他窗口覆盖没问题，最小化必冻结。专属 Chrome 里需要浏览其他网页时，先点「小窗加速」把 AI 标签弹成小窗，同样不要最小化小窗。
 
-**小窗加速**：popup 点「小窗加速」把当前 AI 标签弹成 480×700 独立小窗——小窗保持「可见」状态即不受节流，速度恢复前台水平。注意：小窗被其他窗口**完全**遮挡或最小化后会退回节流状态（留一条边可见即可）；多个 AI 站点可各弹一个小窗。
+**内置兜底（默认就有）**：每个标签自持 keep-alive WebSocket（豁免页面冻结）+ 扩展后台每 30 秒注入一次检测驱动（不受页面定时器节流影响）+ 结果补投递。popup 诊断详情里的 keepalive 状态、驱动日志、事件时间线可随时确认后台链路是否健康；服务端日志在 `server/runtime/ws.log`。
+
+**小窗加速**：popup 点「小窗加速」把当前 AI 标签弹成 480×700 独立小窗——小窗保持「可见」状态即不受节流，速度恢复前台水平。注意：小窗**最小化**后会冻结渲染、后台停摆（站点层暂停，不是节流级别）；被覆盖视浏览器而定。多个 AI 站点可各弹一个小窗。
 
 **专属 Chrome（后台不限速，推荐）**：双击仓库根目录的 **`start-agent-chrome.bat`**，它会用一个独立 profile 启动一个关闭了全部后台节流的 Chrome 实例（定时器节流/renderer 降权/遮挡判定/intensive throttling 四层全关）：
 
 1. 首次使用：在该实例里打开 `chrome://extensions` → 开发者模式 → 加载仓库的 `extension/` 目录
 2. popup 粘贴**同一个 token**（`server/config.local.json`，服务端不变），登录各 AI 站点（登录态持久，只需一次）
-3. 之后在这个实例里照常发任务，**随便最小化、遮挡、切全屏都是满速实时执行**，连小窗加速按钮都不需要
-4. profile 存于 `%LOCALAPPDATA%\ChromeAgentProfile`；日常 Chrome 与它互不干扰
+3. 之后在这个实例里照常发任务：**把窗口放后台被覆盖即可满速执行；唯一不能做的是点最小化**（浏览器会冻结页面渲染，站点停止产出 DOM，任何扩展侧手段都无法恢复——这是浏览器层行为）
+4. 要在该实例里浏览其他网页：先点「小窗加速」把 AI 标签弹成小窗（保持可见，别最小化），再正常浏览
+5. profile 存于 `%LOCALAPPDATA%\ChromeAgentProfile`；日常 Chrome 与它互不干扰
 
-排错：popup 展开诊断详情看「驱动」行是否每 30–60 秒刷新、时间线是否持续出现 `cmd-sent → fill-done → send-done`；服务端 `ws.log` 的 `cmd #` 时间戳应均匀分布在后台时段。
+排错：popup 展开诊断详情看「驱动」行是否每 30–60 秒刷新、时间线是否持续出现 `cmd-sent → fill-done → send-done`；若时间线出现 `probe mut=0/0` 且任务停滞，说明页面被判为不可见——检查是不是点了最小化。服务端 `ws.log` 的 `cmd #` 时间戳应均匀分布在后台时段。
 
 ## 配置详解（server/config.json）
 

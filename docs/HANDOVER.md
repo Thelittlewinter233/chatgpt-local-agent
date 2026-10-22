@@ -203,9 +203,29 @@ dbg timeline 正常一轮的 stage 顺序：
 
 解法是**小窗加速**（popup 按钮）：把当前 AI 标签 `chrome.windows.create({type:'popup', width:480, height:700})` 弹成独立小窗——只要小窗不被完全遮挡、不最小化，Chrome 判定标签「可见」，站点 JS 满速运行，后台执行恢复前台速度。限制：小窗被其他窗口完全覆盖或最小化后 Chrome 仍判 hidden，退回节流状态；多个 AI 站点可各弹一个小窗，与多会话并发天然兼容。替代方案：用 `--disable-background-timer-throttling` 参数启动 Chrome（全局生效但需改启动方式），或关闭 `chrome://settings/performance` 的节能/内存节省模式。
 
+### 9.3 后台工作流终版（v5.8，实测定版）
+
+三层机制的位置决定了什么能做什么不能做：
+
+| 层 | 机制 | 专属 Chrome（flags 全开） | 普通 Chrome |
+| --- | --- | --- | --- |
+| 浏览器层 | 合成器帧产出/遮挡判定/最小化判定 | 被覆盖不 hidden（遮挡检测已禁用）；**最小化必 hidden（flags 管不住）** | 覆盖或最小化都 hidden |
+| 站点层 | visibilitychange 事件门控渲染（Qwen/DeepSeek 实证：hidden 时 mut=0/raf=0/hidreads=0，连 `document.hidden` 属性都不读） | 事件不到达 → 永不暂停 | MAIN world 伪装实测无效（冻结在浏览器层） |
+| 扩展层 | 2.5s 页面轮询（fullSpeedTimers 放行 hidden）+ 30s alarm 驱动 + JSON.parse 完整性判定 | 隐藏期间自动检测/执行/回填 | 驱动兜底 |
+
+**用户操作守则**：
+1. 后台跑任务：专属 Chrome 发起任务后**别点最小化**——用其他窗口盖住它，或点 popup「小窗加速」把 AI 标签弹成小窗放在角落
+2. 要在专属 Chrome 里浏览其他网页：先把 AI 标签小窗化（AI 块所在标签保持渲染），再正常浏览；小窗别最小化
+3. 主 Chrome（未加 flags）：小窗保持可见可用；彻底最小化会退回节流（30s 驱动兜底，每步慢但仍推进）
+4. 排错入口：popup 诊断详情的 `probe` 行（mut/raf/hidreads）——hidden 期间 mut=0 即站点冻结渲染，检查自己是不是点了最小化
+
+| v5.8 | 后台渲染机制探明与工作流定版：MAIN world 探针（mut/raf/hidreads 计数）实锤 **Qwen/DeepSeek 在 `document.hidden` 时整体冻结渲染**（mut=0/raf=0/hidreads=0，DOM 零变化，点进标签才挂载新消息）；可见性伪装（覆盖 hidden/visibilityState + 假事件）实测无效——冻结在**浏览器层**（最小化时合成器停帧 → IO/视口计算停摆 → 虚拟化渲染器零产出），页面属性/事件伪装管不到；滚动到底触发挂载也无效（容器本就在底部）；探针还证伪了 rAF 依赖（可见时 raf=0/0）。终版工作流见 §9.3；配套：隐藏态快速路径 JSON.parse 完整性判定（首观察即触发）、fullSpeedTimers 漂移自检放行隐藏轮询、scroll-to-bottom 尝试（对部分站点有效） |
+
 ## 10. 当前状态与待办
 
-- 主分支与 origin/main 同步（最新 `c206288`）；v5.0 多会话并发 + v5.1 后台运行 + v5.2 诊断层（ws.log 持久化、popup keepalive 状态与 dbg timeline）+ v5.3 后台驱动兜底 + v5.4 空转保护 + v5.5 安全审计加固均在工作区，未提交
+- 主分支与 origin/main 同步（最新 `8501305`）；工作区仅有可见性伪装（probe-main.js，对 Chrome 生效/对 Firefox 跳过）与本轮文档更新
+- **后台运行终版工作流（重要）**：专属 Chrome（`start-agent-chrome.bat`）**永不最小化**——被其他窗口覆盖没问题（遮挡检测已禁用），点最小化必冻结（浏览器层，无解）；要在专属 Chrome 里浏览其他网页时，用 popup「小窗加速」把 AI 标签弹成小窗，同样别最小化小窗。普通 Chrome 里用小窗 + 保持可见，或接受较慢的 30s 驱动节奏
+- 大文件写入走 fs_append 分块（协议规则：>4000 字符必须拆块）——但注意 Qwen 隐藏时连小块的 DOM 都不产出，Qwen 后台必须配合「覆盖/小窗」工作流，仅靠分块不够
 - 去重键是 `adapter:hash8`（块正文 SHA-1 前 8 位）；「状态残留」与「新事件」靠 DOM 元素引用区分：`respondedEls`（WeakSet）命中即 `skip-responded-el`，同 hash 换了新元素才走 `replay-cached-new-el`（仅 ok 载荷）或 `refill-same-el`/`rerun-seen-new-el`
 - 确认条待批帧存 `pend`（background 以 `hash8` 为键写入 `{payload, at, tabId}`，上限 20 条按 at 淘汰）；`takePend` 用 `dedupKey` 或 `hash8` 取，且 `tabId` 不匹配直接返回 null——跨标签不会互相消费；超过 `PEND_MAX_AGE`(10min) 视为失效
 - v5.4 起 guard/seen/seq 全部按标签页分键（`ab_guard_<tabId>` / `ab_seen_<tabId>` / `ab_seq_<tabId>`），首次运行从旧全局键 `ab_guard`/`ab_seen` 迁移一次并写 `ab_state_migrated`；`ab_seq_` 是自增写入序号，用于在 `storage.onChanged` 里识别并抑制自己写入的回声。`tabs.onRemoved` 清理这些键 + `lastAckId_<tabId>` + 该 tab 的 `pend` 条目
