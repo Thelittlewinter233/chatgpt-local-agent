@@ -29,6 +29,7 @@ let lastDriveAt = 0;
 let fullSpeedTimers = false;
 const pendingFillHandlers = new Map();
 const recentDeliveries = new Map();
+const deliveryFlights = new Set();
 let dbgTimeline = [];
 let dbgTabKey = 'x';
 let timelineFlushTimer = null;
@@ -98,13 +99,13 @@ async function dbg(stage, extra) {
   console.log('[AgentBridge]', stage, extra || '');
 }
 
-function markDelivered(hash8) {
-  recentDeliveries.set(hash8, Date.now());
+function markDelivered(key) {
+  recentDeliveries.set(key, Date.now());
   for (const [k, t] of recentDeliveries) if (Date.now() - t > DELIVERY_DEDUP_MS) recentDeliveries.delete(k);
 }
 
-const recentlyDelivered = hash8 => {
-  const at = recentDeliveries.get(hash8);
+const recentlyDelivered = key => {
+  const at = recentDeliveries.get(key);
   return !!at && Date.now() - at < DELIVERY_DEDUP_MS;
 };
 
@@ -837,6 +838,17 @@ async function deliver(key, hash8, payload, el, cmd, trackLoop, priorSignature) 
 }
 
 async function respond(hash8, payload, el) {
+  const key = ADAPTER.id + ':' + hash8;
+  if (recentlyDelivered(key)) {
+    if (el) respondedEls.add(el);
+    dbg('skip-already-sent', key);
+    return;
+  }
+  if (deliveryFlights.has(key)) {
+    dbg('skip-delivery-inflight', key);
+    return;
+  }
+  deliveryFlights.add(key);
   let filled = false;
   try {
   const text = '```agent-result\n' + buildResultBody(hash8, payload) + '\n```';
@@ -857,10 +869,11 @@ async function respond(hash8, payload, el) {
   if (current.autoSend === false) { highlight(true); toast('AgentBridge: 已填入未发送（自动发送已关闭）'); return; }
   const sent = await ADAPTER.send();
   if (!sent) { dbg('send-failed', hash8); highlight(true); toast('AgentBridge: 已填入未发送（发送失败），请手动按回车发送'); }
-  else { dbg('send-done', hash8); highlight(false); }
+  else { dbg('send-done', hash8); highlight(false); markDelivered(key); }
   cooldownUntil = Date.now() + 5000;
   } finally {
     if (el && (filled || (fillAttempts.get(el) || 0) >= MAX_FILL_ATTEMPTS)) respondedEls.add(el);
+    deliveryFlights.delete(key);
   }
 }
 
