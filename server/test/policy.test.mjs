@@ -1,22 +1,24 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { checkPath, checkCommand, classifyCommand } from '../src/policy.mjs';
 
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
 const config = {
-  allowedRoots: ['d:\\Desktop\\agent_project'],
-  defaultCwd: 'd:\\Desktop\\agent_project',
+  allowedRoots: [root],
+  defaultCwd: root,
   policy: { defaultAllow: false, whitelist: ['node', 'git', 'cd', 'dir'] }
 };
 
 test('checkPath allows paths inside roots', () => {
-  assert.equal(checkPath(config, 'd:\\Desktop\\agent_project\\server'), path.resolve('d:\\Desktop\\agent_project\\server'));
-  assert.equal(checkPath(config, 'd:/Desktop/agent_project'), path.resolve('d:/Desktop/agent_project'));
+  assert.equal(checkPath(config, path.join(root, 'server')), path.join(root, 'server'));
+  assert.equal(checkPath(config, root), root);
 });
 
 test('checkPath denies paths outside roots and traversal', () => {
   assert.throws(() => checkPath(config, 'c:\\Windows\\system32'), e => e.denied === true);
-  assert.throws(() => checkPath(config, 'd:\\Desktop\\agent_project\\..\\other'), e => e.denied === true);
+  assert.throws(() => checkPath(config, path.join(root, '..', 'other')), e => e.denied === true);
   assert.throws(() => checkPath(config, ''), e => e.denied === true);
 });
 

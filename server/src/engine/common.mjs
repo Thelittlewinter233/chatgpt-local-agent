@@ -38,6 +38,9 @@ export function loadConfig() {
   config.maxOutputBytes ||= 32 * 1024 * 1024;
   if (!Number.isInteger(config.port) || config.port < 1024 || config.port > 65535) throw new Error('Invalid port');
   if (!Array.isArray(config.allowedRoots) || !config.allowedRoots.length) throw new Error('allowedRoots must be configured');
+  const configDir = path.dirname(CONFIG_PATH);
+  config.allowedRoots = config.allowedRoots.map(root => path.isAbsolute(root) ? root : path.resolve(configDir, root));
+  if (!path.isAbsolute(config.defaultCwd)) config.defaultCwd = path.resolve(configDir, config.defaultCwd);
   if (!config.defaultCwd || !fs.statSync(config.defaultCwd).isDirectory()) throw new Error('Invalid defaultCwd');
   fs.mkdirSync(config.runtime, { recursive: true });
   return config;
